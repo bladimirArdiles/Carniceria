@@ -95,3 +95,27 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Reglas de impresión para ticket térmico */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #receipt-print,
+  #receipt-print * {
+    visibility: visible;
+  }
+  #receipt-print {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 80mm !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}

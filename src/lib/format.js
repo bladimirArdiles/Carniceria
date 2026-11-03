@@ -40,6 +40,16 @@ export const fmtLongDate = (d = new Date()) =>
 
 export const DEFAULT_CATEGORIES = ["Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos", "Elaborados", "Otros"];
 
+export const getProductCategory = (p) => {
+  if (p?.category && p.category.trim()) return p.category.trim();
+  const n = (p?.name || "").toLowerCase();
+  if (n.includes("pollo")) return "Pollo";
+  if (n.includes("cerdo") || n.includes("pechito") || n.includes("bondiola")) return "Cerdo";
+  if (n.includes("chorizo") || n.includes("morcilla") || n.includes("salchicha")) return "Embutidos";
+  if (n.includes("chinchulin") || n.includes("molleja") || n.includes("higado") || n.includes("rinon")) return "Achuras";
+  return "Vaca";
+};
+
 export const SEED_PRODUCTS = [
   { id: "p-asado", name: "Asado", category: "Vaca", unit: "kg", price: 11900, stock: 38.5, minStock: 10 },
   { id: "p-vacio", name: "Vacío", category: "Vaca", unit: "kg", price: 13800, stock: 22.4, minStock: 8 },

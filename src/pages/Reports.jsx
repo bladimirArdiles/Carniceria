@@ -1,5 +1,16 @@
 import { useMemo, useRef, useState } from "react";
-import { CalendarBlank, ChartBar, CreditCard, DownloadSimple, Funnel, UploadSimple, X } from "@phosphor-icons/react";
+import {
+  CalendarBlank,
+  ChartBar,
+  CreditCard,
+  DownloadSimple,
+  FileCsv,
+  Funnel,
+  Printer,
+  Receipt,
+  UploadSimple,
+  X,
+} from "@phosphor-icons/react";
 import { useStore } from "../lib/store.jsx";
 import { buildSeries, summarize } from "../lib/stats.js";
 import { ALL_PAYMENT_METHODS, dayKey, fmtDateTime, fmtDay, fmtMonth, money, num, qtyText } from "../lib/format.js";
@@ -7,6 +18,8 @@ import LineChart from "../components/ui/LineChart.jsx";
 import Segmented from "../components/ui/Segmented.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ConfirmButton from "../components/ui/ConfirmButton.jsx";
+import CashClosingModal from "../components/reports/CashClosingModal.jsx";
+import ReceiptModal from "../components/pos/ReceiptModal.jsx";
 
 const MONTHS = [
   { value: "all", label: "Todos los meses" },
@@ -35,7 +48,7 @@ function Metric({ label, value, hint }) {
 }
 
 export default function Reports() {
-  const { sales, balances, customers, voidSale, exportAll, importAll, notify } = useStore();
+  const { sales, balances, customers, payments, voidSale, exportAll, importAll, notify } = useStore();
 
   const now = new Date();
   const todayStr = dayKey(now);
@@ -61,6 +74,10 @@ export default function Reports() {
   const [metric, setMetric] = useState("money");
   const [visibleSalesCount, setVisibleSalesCount] = useState(10);
   const fileRef = useRef(null);
+
+  // Modales de Fase 6: Cierre de Caja Z y Reimpresión de Comprobante
+  const [showCashClosing, setShowCashClosing] = useState(false);
+  const [selectedSaleForReceipt, setSelectedSaleForReceipt] = useState(null);
 
   const availableYears = useMemo(() => {
     const years = new Set(sales.map((s) => new Date(s.date).getFullYear()));
@@ -165,8 +182,91 @@ export default function Reports() {
     r.readAsText(file);
   };
 
+  // Exportar ventas a planilla CSV / Excel con codificación UTF-8 BOM
+  const exportSalesCSV = () => {
+    if (!filteredSales.length) {
+      notify("No hay ventas para exportar con los filtros actuales");
+      return;
+    }
+
+    const headers = [
+      "Fecha y Hora",
+      "ID Venta",
+      "Cliente",
+      "DNI Cliente",
+      "Metodo de Pago",
+      "Cortes / Detalle",
+      "Kilos Totales",
+      "Total Venta ($)",
+    ];
+
+    const rows = filteredSales.map((s) => {
+      const client = customers.find((c) => c.id === s.customerId);
+      const itemsSummary = s.items
+        ?.map((i) => `${i.name} (${num(i.qty)} ${i.unit})`)
+        .join(" + ");
+      const totalKilos =
+        s.items
+          ?.filter((i) => i.unit === "kg")
+          .reduce((acc, i) => acc + i.qty, 0) || 0;
+
+      return [
+        `"${fmtDateTime(s.date)}"`,
+        `"${s.id}"`,
+        `"${client ? client.name : "Mostrador"}"`,
+        `"${client?.dni || ""}"`,
+        `"${s.method}"`,
+        `"${itemsSummary || ""}"`,
+        `"${num(totalKilos)}"`,
+        s.total,
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `ventas-carniceria-${dateMode === "day" ? exactDate : dayKey()}.csv`);
+    link.click();
+    URL.revokeObjectURL(url);
+    notify("Planilla de ventas descargada en formato Excel");
+  };
+
+  const reprintSale = (sale) => {
+    const customer = customers.find((c) => c.id === sale.customerId);
+    setSelectedSaleForReceipt({
+      ...sale,
+      customer,
+      tendered: sale.tendered || sale.total,
+      change: sale.change || 0,
+      newBalance: 0,
+    });
+  };
+
   return (
     <div className="space-y-6">
+      {/* Botones de acción principales: Cierre de Caja Z y Exportar CSV */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setShowCashClosing(true)}
+          className="btn-primary h-16 text-lg shadow-md flex items-center justify-center gap-2.5"
+        >
+          <Receipt size={24} weight="bold" />
+          <span>Cierre de Caja Diario (Reporte Z)</span>
+        </button>
+        <button
+          type="button"
+          onClick={exportSalesCSV}
+          disabled={!filteredSales.length}
+          className="btn-ghost h-16 text-lg font-bold flex items-center justify-center gap-2.5"
+        >
+          <FileCsv size={24} weight="bold" />
+          <span>Exportar a Excel (CSV)</span>
+        </button>
+      </div>
+
       {/* Panel de Filtros: Fecha y Método de Pago */}
       <section aria-label="Filtros de estadísticas" className="card space-y-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -199,6 +299,88 @@ export default function Reports() {
               Restablecer filtros
             </button>
           )}
+        </div>
+
+        {/* Accesos rápidos de período */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-zinc-200 dark:border-zinc-800">
+          <span className="text-xs font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">Accesos directos:</span>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setDateMode("day");
+                setExactDate(todayStr);
+                setRange("day");
+              }}
+              className={"rounded-xl px-3 py-1.5 text-xs font-bold transition active:scale-95 " +
+                (dateMode === "day" && exactDate === todayStr
+                  ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-850 dark:text-zinc-300")}
+            >
+              Hoy
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const d = new Date(now);
+                d.setDate(d.getDate() - 1);
+                setDateMode("day");
+                setExactDate(dayKey(d));
+                setRange("day");
+              }}
+              className={"rounded-xl px-3 py-1.5 text-xs font-bold transition active:scale-95 " +
+                (dateMode === "day" && exactDate !== todayStr
+                  ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-850 dark:text-zinc-300")}
+            >
+              Ayer
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDateMode("month");
+                setFilterYear(currentYearStr);
+                setFilterMonth(currentMonthStr);
+                setRange("day");
+              }}
+              className={"rounded-xl px-3 py-1.5 text-xs font-bold transition active:scale-95 " +
+                (dateMode === "month" && filterYear === currentYearStr && filterMonth === currentMonthStr
+                  ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-850 dark:text-zinc-300")}
+            >
+              Este mes
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const d = new Date(now);
+                d.setDate(d.getDate() - 7);
+                setDateMode("range");
+                setStartDate(dayKey(d));
+                setEndDate(todayStr);
+                setRange("day");
+              }}
+              className={"rounded-xl px-3 py-1.5 text-xs font-bold transition active:scale-95 " +
+                (dateMode === "range"
+                  ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-850 dark:text-zinc-300")}
+            >
+              Últimos 7 días
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDateMode("all");
+                setRange("month");
+              }}
+              className={"rounded-xl px-3 py-1.5 text-xs font-bold transition active:scale-95 " +
+                (dateMode === "all"
+                  ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-850 dark:text-zinc-300")}
+            >
+              Todo el historial
+            </button>
+          </div>
         </div>
 
         {/* Tipo de filtro de fecha */}
@@ -517,6 +699,14 @@ export default function Reports() {
                     </p>
                   </div>
                   <p className="font-mono text-lg font-bold">{money(v.total)}</p>
+                  <button
+                    type="button"
+                    title="Ver ticket térmico y reimprimir"
+                    onClick={() => reprintSale(v)}
+                    className="btn-icon h-10 w-10 text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+                  >
+                    <Printer size={18} weight="bold" />
+                  </button>
                   <ConfirmButton label="Anular venta y devolver stock" onConfirm={() => { voidSale(v.id); notify("Venta anulada, stock devuelto"); }} />
                 </li>
               ))}
@@ -545,6 +735,24 @@ export default function Reports() {
           <button type="button" className="btn-ghost" onClick={() => fileRef.current.click()}><UploadSimple size={22} weight="bold" />Restaurar respaldo</button>
         </div>
       </section>
+
+      {/* Modal de Cierre de Caja Z */}
+      {showCashClosing && (
+        <CashClosingModal
+          sales={filteredSales}
+          payments={payments}
+          dateLabel={periodLabel}
+          onClose={() => setShowCashClosing(false)}
+        />
+      )}
+
+      {/* Modal de Reimpresión de Comprobante / Ticket */}
+      {selectedSaleForReceipt && (
+        <ReceiptModal
+          sale={selectedSaleForReceipt}
+          onClose={() => setSelectedSaleForReceipt(null)}
+        />
+      )}
     </div>
   );
 }
