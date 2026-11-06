@@ -19,15 +19,21 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
   const submit = (e) => {
     e.preventDefault();
     if (!name.trim()) return setError("Escribí el nombre del producto.");
-    if (!(toNum(price) > 0)) return setError("Ingresá un precio mayor a 0.");
+    const p = toNum(price);
+    if (!(p > 0)) return setError("Ingresá un precio mayor a $0.");
+    const ms = toNum(minStock);
+    if (isNaN(ms) || ms < 0) return setError("El stock mínimo de alerta no puede ser negativo.");
+    const st = toNum(stock);
+    if (isNaN(st) || st < 0) return setError("El stock inicial no puede ser negativo.");
+
     onSave({
       id: product?.id || uid(),
       name: name.trim(),
       category: category.trim() || "Otros",
       unit,
-      price: Math.round(toNum(price)),
-      minStock: toNum(minStock) || 0,
-      ...(product ? {} : { stock: toNum(stock) || 0 }),
+      price: Math.round(p),
+      minStock: ms,
+      ...(product ? {} : { stock: st }),
     });
   };
 

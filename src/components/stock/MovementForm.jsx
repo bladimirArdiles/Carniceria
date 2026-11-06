@@ -82,7 +82,8 @@ export default function MovementForm({ products, productId, type: initialType, o
   const submit = (e) => {
     e.preventDefault();
     if (!product) return setError("Elegí un producto.");
-    if (isNaN(q) || q < 0 || (type !== "ajuste" && q === 0)) return setError("Ingresá una cantidad válida.");
+    if (isNaN(q) || q < 0 || (type !== "ajuste" && q === 0)) return setError("Ingresá una cantidad válida (mayor a 0).");
+    if (costVal < 0) return setError("El costo total no puede ser negativo.");
     if (type === "merma" && q > product.stock) return setError("La merma no puede superar el stock actual.");
     onSave({ productId: pid, type, qty: q, note: note.trim(), cost: costVal });
   };

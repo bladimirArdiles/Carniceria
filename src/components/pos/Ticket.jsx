@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bank, CreditCard, HandCoins, MagnifyingGlass, Money, Receipt, Trash, User, X } from "@phosphor-icons/react";
+import { Bank, CircleNotch, CreditCard, HandCoins, MagnifyingGlass, Money, Receipt, Trash, User, X } from "@phosphor-icons/react";
 import Segmented from "../ui/Segmented.jsx";
 import EmptyState from "../ui/EmptyState.jsx";
 import { money, qtyText } from "../../lib/format.js";
 
-export default function Ticket({ lines, customers, balances, customerId, setCustomerId, method, setMethod, onEdit, onRemove, onClear, onCharge }) {
+export default function Ticket({
+  lines,
+  customers,
+  balances,
+  customerId,
+  setCustomerId,
+  method,
+  setMethod,
+  onEdit,
+  onRemove,
+  onClear,
+  onCharge,
+  isProcessing = false,
+}) {
   const [tendered, setTendered] = useState("");
   const [customerQuery, setCustomerQuery] = useState("");
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
@@ -22,7 +35,12 @@ export default function Ticket({ lines, customers, balances, customerId, setCust
     if (!id && method === "Fiado") setMethod("Efectivo");
   };
 
+  const isUnderpaid = method === "Efectivo" && given > 0 && given < total;
+  const isFiadoWithoutCustomer = method === "Fiado" && !customerId;
+  const canCharge = lines.length > 0 && total > 0 && !isUnderpaid && !isFiadoWithoutCustomer;
+
   const charge = () => {
+    if (!canCharge) return;
     onCharge({
       tendered: given > 0 ? given : total,
       change: Math.max(0, change),
@@ -317,14 +335,33 @@ export default function Ticket({ lines, customers, balances, customerId, setCust
         <button
           type="button"
           id="btn-cobrar"
-          className="btn-primary h-20 w-full text-xl shadow-md flex items-center justify-center gap-2"
-          disabled={!lines.length}
+          className={`btn-primary h-20 w-full text-xl shadow-md flex items-center justify-center gap-2 ${
+            !canCharge || isProcessing ? "opacity-50 cursor-not-allowed" : ""
+          }`}
+          disabled={!canCharge || isProcessing}
           onClick={charge}
         >
-          <span>{method === "Fiado" ? "Anotar en cuenta" : "Cobrar"} {total > 0 && money(total)}</span>
-          <kbd className="hidden lg:inline-flex items-center rounded-lg bg-zinc-950/20 px-2 py-0.5 text-xs font-mono font-bold text-zinc-950">
-            F2
-          </kbd>
+          {isProcessing ? (
+            <span className="flex items-center gap-2">
+              <CircleNotch size={24} weight="bold" className="animate-spin" />
+              <span>Registrando venta...</span>
+            </span>
+          ) : (
+            <>
+              <span>
+                {isFiadoWithoutCustomer
+                  ? "Elegí un cliente para fiar"
+                  : isUnderpaid
+                  ? `Faltan ${money(total - given)}`
+                  : `${method === "Fiado" ? "Anotar en cuenta" : "Cobrar"} ${total > 0 ? money(total) : ""}`}
+              </span>
+              {canCharge && (
+                <kbd className="hidden lg:inline-flex items-center rounded-lg bg-zinc-950/20 px-2 py-0.5 text-xs font-mono font-bold text-zinc-950">
+                  F2
+                </kbd>
+              )}
+            </>
+          )}
         </button>
       </div>
     </section>

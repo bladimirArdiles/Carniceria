@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { Check, CheckCircle, CurrencyDollar, Money, Printer, Scales, Warning, WarningCircle, X } from "@phosphor-icons/react";
+import { Check, CheckCircle, CircleNotch, CurrencyDollar, Money, Printer, Scales, Warning, WarningCircle, X } from "@phosphor-icons/react";
 import Modal from "../ui/Modal.jsx";
 import { fmtDateTime, fmtLongDate, money, num } from "../../lib/format.js";
 
-export default function CashClosingModal({ sales, payments, dateLabel, onClose }) {
+export default function CashClosingModal({ sales, payments, dateLabel, onClose, onSaveClosing }) {
   const [countedCash, setCountedCash] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Cálculos de caja y ventas
   const stats = useMemo(() => {
@@ -56,7 +58,28 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose }
   const physicalCash = parseFloat(String(countedCash).replace(",", ".")) || 0;
   const cashDifference = countedCash !== "" ? physicalCash - stats.expectedCash : null;
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (onSaveClosing && !savedSuccess) {
+      setIsSaving(true);
+      try {
+        await onSaveClosing({
+          period_label: dateLabel || fmtLongDate(),
+          expected_cash: stats.expectedCash,
+          physical_cash: physicalCash,
+          cash_difference: cashDifference || 0,
+          total_liquid: stats.totalLiquid,
+          total_sales: stats.totalSales,
+          ticket_count: stats.ticketCount,
+          total_kilos: stats.totalKilos,
+          closing_date: new Date().toISOString(),
+        });
+        setSavedSuccess(true);
+      } catch (err) {
+        console.error("Error al persistir cierre de caja:", err);
+      } finally {
+        setIsSaving(false);
+      }
+    }
     window.print();
   };
 
@@ -208,10 +231,25 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose }
           <button
             type="button"
             onClick={handlePrint}
+            disabled={isSaving}
             className="btn-primary h-14 flex-1 text-base shadow-md flex items-center justify-center gap-2"
           >
-            <Printer size={22} weight="bold" />
-            <span>Imprimir Cierre Z</span>
+            {isSaving ? (
+              <>
+                <CircleNotch size={22} weight="bold" className="animate-spin" />
+                <span>Guardando Cierre Z...</span>
+              </>
+            ) : savedSuccess ? (
+              <>
+                <CheckCircle size={22} weight="fill" className="text-emerald-950" />
+                <span>Cierre Guardado e Imprimir</span>
+              </>
+            ) : (
+              <>
+                <Printer size={22} weight="bold" />
+                <span>Guardar e Imprimir Cierre Z</span>
+              </>
+            )}
           </button>
           <button
             type="button"

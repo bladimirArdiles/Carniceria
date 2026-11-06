@@ -28,6 +28,7 @@ export default function Counter() {
   const [customerId, setCustomerId] = useState("");
   const [method, setMethod] = useState("Efectivo");
   const [completedSale, setCompletedSale] = useState(null);
+  const [isProcessingSale, setIsProcessingSale] = useState(false);
 
   // Estados de Fase 3: Atajos de teclado y experiencia mobile
   const searchInputRef = useRef(null);
@@ -95,22 +96,52 @@ export default function Counter() {
     setDialog(null);
   };
 
-  const charge = ({ tendered, change } = {}) => {
-    const sale = completeSale({ items: lines, customerId, method });
-    const customer = customers.find((c) => c.id === customerId);
-    setCompletedSale({
-      ...sale,
-      customer,
-      tendered: tendered || sale.total,
-      change: change || 0,
-      newBalance: customerId
-        ? (balances[customerId] || 0) + (method === "Fiado" ? sale.total : 0)
-        : 0,
-    });
-    setLines([]);
-    setCustomerId("");
-    setMethod("Efectivo");
-    setIsMobileTicketOpen(false);
+  const charge = async ({ tendered, change } = {}) => {
+    if (isProcessingSale || lines.length === 0) return;
+    setIsProcessingSale(true);
+
+    try {
+      const total = lines.reduce((s, l) => s + l.total, 0);
+      const tVal = typeof tendered === "number" ? tendered : total;
+      const cVal = typeof change === "number" ? change : Math.max(0, tVal - total);
+
+      // 1. Invocar y esperar a que completeSale termine con éxito
+      const sale = await completeSale({
+        items: lines,
+        customerId: customerId || null,
+        method,
+        tendered: tVal,
+        change: cVal,
+      });
+
+      // 2. Resolver datos del cliente y saldo proyectado
+      const customer = customers.find((c) => c.id === customerId);
+      const curDebt = customerId ? (balances[customerId] || 0) : 0;
+      const saleAmount = sale?.total || total;
+      const newBalance = customerId
+        ? curDebt + (method === "Fiado" ? saleAmount : 0)
+        : 0;
+
+      // 3. Mostrar modal de comprobante con el objeto de venta resuelto
+      setCompletedSale({
+        ...sale,
+        customer,
+        tendered: tVal,
+        change: cVal,
+        newBalance,
+      });
+
+      // 4. Limpiar el mostrador SOLO después de la confirmación exitosa
+      setLines([]);
+      setCustomerId("");
+      setMethod("Efectivo");
+      setIsMobileTicketOpen(false);
+    } catch (err) {
+      console.error("Error al procesar la venta en mostrador:", err);
+      // Las líneas quedan intactas en el ticket para que el cajero no pierda los cortes pesados
+    } finally {
+      setIsProcessingSale(false);
+    }
   };
 
   // Atajos de teclado globales (F4/Slash para búsqueda, F2 para cobro, Escape)
@@ -295,6 +326,7 @@ export default function Counter() {
           onRemove={(id) => setLines((p) => p.filter((l) => l.productId !== id))}
           onClear={() => setLines([])}
           onCharge={charge}
+          isProcessing={isProcessingSale}
         />
       </aside>
 
@@ -380,6 +412,7 @@ export default function Counter() {
                 setIsMobileTicketOpen(false);
               }}
               onCharge={charge}
+              isProcessing={isProcessingSale}
             />
           </div>
         </div>

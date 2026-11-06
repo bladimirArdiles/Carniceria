@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { CheckCircle, CircleNotch, Eye, EyeSlash, Knife, LockKey, Moon, SignIn, Sun, User, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+import { CheckCircle, CircleNotch, Eye, EyeSlash, Knife, LockKey, Moon, ShieldWarning, SignIn, Sun, User, WarningCircle } from "@phosphor-icons/react";
+import { authService } from "../lib/authService.js";
 
 export default function Login({ onLogin, theme, onToggleTheme }) {
   const [username, setUsername] = useState("");
@@ -8,21 +9,38 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
   const [status, setStatus] = useState("idle"); // "idle" | "loading" | "success" | "error"
   const [errorMessage, setErrorMessage] = useState("");
   const [shake, setShake] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutTimer, setLockoutTimer] = useState(0);
+
+  // Contador de bloqueo regresivo contra ataques de fuerza bruta
+  useEffect(() => {
+    if (lockoutTimer <= 0) return;
+    const interval = setInterval(() => {
+      setLockoutTimer((t) => (t > 1 ? t - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lockoutTimer]);
 
   const triggerShake = () => {
     setShake(true);
     setTimeout(() => setShake(false), 500);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage("");
+
+    if (lockoutTimer > 0) {
+      setErrorMessage(`Terminal bloqueada por seguridad. Esperá ${lockoutTimer}s.`);
+      triggerShake();
+      return;
+    }
 
     const u = username.trim();
     const p = password.trim();
 
     if (!u) {
-      setErrorMessage("Por favor, ingresá tu usuario.");
+      setErrorMessage("Por favor, ingresá tu usuario o correo.");
       setStatus("error");
       triggerShake();
       return;
@@ -37,25 +55,27 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
 
     setStatus("loading");
 
-    // Simulación de autenticación fluida con respuesta táctil
-    setTimeout(() => {
-      // Credenciales aceptadas: admin/1234, mostrador/1234 o cualquier usuario no vacío
-      if (p.length < 3) {
-        setStatus("error");
-        setErrorMessage("Contraseña incorrecta (mínimo 3 caracteres).");
-        triggerShake();
-        return;
-      }
-
+    try {
+      const session = await authService.signIn({ identifier: u, password: p });
       setStatus("success");
+      setFailedAttempts(0);
+      setLockoutTimer(0);
       setTimeout(() => {
-        onLogin({
-          username: u,
-          role: u.toLowerCase() === "admin" ? "Administrador" : "Operador",
-          loginAt: new Date().toISOString(),
-        });
-      }, 550);
-    }, 600);
+        onLogin(session);
+      }, 450);
+    } catch (err) {
+      setStatus("error");
+      const nextFailures = failedAttempts + 1;
+      setFailedAttempts(nextFailures);
+
+      if (nextFailures >= 5) {
+        setLockoutTimer(30);
+        setErrorMessage("Demasiados intentos fallidos. Terminal bloqueada por 30 segundos.");
+      } else {
+        setErrorMessage(err.message || "Usuario o contraseña inválidos.");
+      }
+      triggerShake();
+    }
   };
 
   const handleQuickFill = (user, pass) => {
@@ -188,10 +208,17 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
           {/* Botón Submit interactivo */}
           <button
             type="submit"
-            disabled={status === "loading" || status === "success"}
-            className="btn-primary mt-2 h-14 w-full text-base font-bold shadow-md transition-all duration-200"
+            disabled={status === "loading" || status === "success" || lockoutTimer > 0}
+            className={`btn-primary mt-2 h-14 w-full text-base font-bold shadow-md transition-all duration-200 ${
+              lockoutTimer > 0 ? "opacity-50 cursor-not-allowed bg-zinc-600" : ""
+            }`}
           >
-            {status === "loading" ? (
+            {lockoutTimer > 0 ? (
+              <span className="flex items-center gap-2 text-zinc-300">
+                <ShieldWarning size={20} weight="bold" />
+                Bloqueado ({lockoutTimer}s)
+              </span>
+            ) : status === "loading" ? (
               <span className="flex items-center gap-2">
                 <CircleNotch size={20} weight="bold" className="animate-spin" />
                 Ingresando...
@@ -210,30 +237,40 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
           </button>
         </form>
 
-        {/* Accesos rápidos para el mostrador (1 clic para rellenar) */}
+        {/* Accesos rápidos para el personal (1 clic para rellenar) */}
         <div className="mt-6 border-t border-zinc-200 pt-5 dark:border-zinc-800">
           <p className="mb-2 text-center text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            Cuentas rápidas de acceso
+            Perfiles rápidos de acceso
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
-              onClick={() => handleQuickFill("mostrador", "1234")}
-              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              onClick={() => handleQuickFill("cajero", "1234")}
+              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              <span>Mostrador</span>
-              <span className="mt-0.5 font-mono text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                clave: 1234
+              <span>Cajero</span>
+              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
+                1234
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickFill("stock", "1234")}
+              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <span>Stock</span>
+              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
+                1234
               </span>
             </button>
             <button
               type="button"
               onClick={() => handleQuickFill("admin", "1234")}
-              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              <span>Administrador</span>
-              <span className="mt-0.5 font-mono text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                clave: 1234
+              <span>Admin</span>
+              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
+                1234
               </span>
             </button>
           </div>

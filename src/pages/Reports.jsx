@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarBlank,
   ChartBar,
@@ -48,7 +48,7 @@ function Metric({ label, value, hint }) {
 }
 
 export default function Reports() {
-  const { sales, balances, customers, payments, voidSale, exportAll, importAll, notify } = useStore();
+  const { sales, balances, customers, payments, voidSale, saveCashClosing, loadSalesRange, exportAll, importAll, notify } = useStore();
 
   const now = new Date();
   const todayStr = dayKey(now);
@@ -84,6 +84,23 @@ export default function Reports() {
     years.add(now.getFullYear());
     return Array.from(years).sort((a, b) => b - a);
   }, [sales, now]);
+
+  // Carga bajo demanda de ventas históricas desde Supabase cuando se cambian los filtros
+  useEffect(() => {
+    if (typeof loadSalesRange !== "function") return;
+    if (dateMode === "range" && startDate && endDate) {
+      loadSalesRange({ startDate, endDate });
+    } else if (dateMode === "day" && exactDate) {
+      loadSalesRange({ startDate: exactDate, endDate: exactDate });
+    } else if (dateMode === "month" && filterYear !== "all" && filterMonth !== "all") {
+      const y = Number(filterYear);
+      const m = Number(filterMonth);
+      const start = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      loadSalesRange({ startDate: start, endDate: end });
+    }
+  }, [dateMode, startDate, endDate, exactDate, filterYear, filterMonth, loadSalesRange]);
 
   // Filtrado integral por fecha y método de pago
   const filteredSales = useMemo(() => {
@@ -743,6 +760,7 @@ export default function Reports() {
           payments={payments}
           dateLabel={periodLabel}
           onClose={() => setShowCashClosing(false)}
+          onSaveClosing={saveCashClosing}
         />
       )}
 

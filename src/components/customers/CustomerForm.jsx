@@ -16,11 +16,16 @@ export default function CustomerForm({ customer, onSave, onClose }) {
   const submit = (e) => {
     e.preventDefault();
     if (!f.name.trim()) return setError("Escribí el nombre del cliente.");
+    const cleanDni = f.dni ? f.dni.trim().replace(/[^\d]/g, "") : "";
+    if (f.dni && cleanDni.length < 6) {
+      return setError("El DNI debe tener al menos 6 dígitos numéricos.");
+    }
+    const cleanPhone = f.phone ? f.phone.trim().replace(/[^\d+ -]/g, "") : "";
     onSave({
       id: customer?.id || uid(),
       name: f.name.trim(),
-      dni: f.dni.trim(),
-      phone: f.phone.trim(),
+      dni: cleanDni || "",
+      phone: cleanPhone,
       address: f.address.trim(),
     });
   };

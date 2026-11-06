@@ -1,19 +1,35 @@
-import { useEffect, useState } from "react";
-import { CashRegister, ChartBar, Moon, Package, SignOut, Sun, UsersThree, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowsClockwise,
+  CashRegister,
+  ChartBar,
+  CloudCheck,
+  CloudSlash,
+  HardDrives,
+  Moon,
+  Package,
+  ShieldCheck,
+  SignOut,
+  Sun,
+  UsersThree,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { StoreProvider, useStore } from "./lib/store.jsx";
 import { useStored } from "./lib/storage.js";
 import { fmtLongDate } from "./lib/format.js";
+import { authService } from "./lib/authService.js";
 import Counter from "./pages/Counter.jsx";
 import Stock from "./pages/Stock.jsx";
 import Customers from "./pages/Customers.jsx";
 import Reports from "./pages/Reports.jsx";
 import Login from "./pages/Login.jsx";
+import ErrorBoundary from "./components/ui/ErrorBoundary.jsx";
 
-const TABS = [
-  { id: "counter", label: "Mostrador", title: "Mostrador", icon: CashRegister, Page: Counter },
-  { id: "stock", label: "Stock", title: "Stock e inventario", icon: Package, Page: Stock },
-  { id: "customers", label: "Clientes", title: "Clientes y fiados", icon: UsersThree, Page: Customers },
-  { id: "reports", label: "Reportes", title: "Reportes de venta", icon: ChartBar, Page: Reports },
+const ALL_TABS = [
+  { id: "counter", label: "Mostrador", title: "Mostrador", icon: CashRegister, Page: Counter, roles: ["admin", "cajero", "stock"] },
+  { id: "stock", label: "Stock", title: "Stock e inventario", icon: Package, Page: Stock, roles: ["admin", "stock"] },
+  { id: "customers", label: "Clientes", title: "Clientes y fiados", icon: UsersThree, Page: Customers, roles: ["admin", "cajero"] },
+  { id: "reports", label: "Reportes", title: "Reportes de venta y Cierre Z", icon: ChartBar, Page: Reports, roles: ["admin"] },
 ];
 
 function Toast() {
@@ -27,8 +43,20 @@ function Toast() {
 }
 
 function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
-  const [tab, setTab] = useState("counter");
+  const userRole = currentUser?.rawRole || (currentUser?.role === "Administrador" ? "admin" : currentUser?.role === "Encargado de Stock" ? "stock" : "cajero");
+  const availableTabs = useMemo(() => {
+    return ALL_TABS.filter((t) => t.roles.includes(userRole));
+  }, [userRole]);
+
+  const [tab, setTab] = useState(availableTabs[0]?.id || "counter");
   const [full, setFull] = useState(false);
+  const { syncStatus, syncWithSupabase, isSupabaseConfigured } = useStore();
+
+  useEffect(() => {
+    if (!availableTabs.some((t) => t.id === tab)) {
+      setTab(availableTabs[0]?.id || "counter");
+    }
+  }, [availableTabs, tab]);
 
   useEffect(() => {
     const h = () => setFull(true);
@@ -36,13 +64,13 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
     return () => window.removeEventListener("ca:storage-full", h);
   }, []);
 
-  const current = TABS.find((t) => t.id === tab);
+  const current = availableTabs.find((t) => t.id === tab) || availableTabs[0];
   const Page = current.Page;
 
   return (
     <div className="min-h-[100dvh] md:pl-24">
       <aside className="fixed inset-y-0 left-0 hidden w-24 flex-col items-center gap-2 border-r border-zinc-200 bg-white py-4 dark:border-zinc-800 dark:bg-zinc-900 md:flex">
-        {TABS.map(({ id, label, icon: Icon }) => {
+        {availableTabs.map(({ id, label, icon: Icon }) => {
           const on = tab === id;
           return (
             <button key={id} onClick={() => setTab(id)} aria-current={on ? "page" : undefined}
@@ -73,10 +101,66 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3.5 py-2 text-xs font-bold dark:border-zinc-800 dark:bg-zinc-900">
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-              <span className="capitalize text-zinc-800 dark:text-zinc-200">{currentUser?.username || "Operador"}</span>
+            {/* Indicador de Estado y Conexión a Supabase */}
+            <button
+              type="button"
+              onClick={syncWithSupabase}
+              title={
+                syncStatus === "synced"
+                  ? "Conectado a Supabase PostgreSQL (Clic para forzar sincronización)"
+                  : syncStatus === "syncing"
+                  ? "Sincronizando datos con Supabase..."
+                  : syncStatus === "error"
+                  ? "Error de conexión con Supabase (Clic para reintentar)"
+                  : "Modo almacenamiento local"
+              }
+              className={`flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-bold transition active:scale-95 ${
+                syncStatus === "synced"
+                  ? "border-emerald-500/30 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  : syncStatus === "syncing"
+                  ? "border-amber-500/30 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-950/40 dark:text-amber-300"
+                  : syncStatus === "error"
+                  ? "border-red-500/30 bg-red-50 text-red-800 dark:border-red-500/20 dark:bg-red-950/40 dark:text-red-300"
+                  : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+              }`}
+            >
+              {syncStatus === "synced" && (
+                <>
+                  <CloudCheck size={16} weight="bold" />
+                  <span className="hidden sm:inline">Supabase BD</span>
+                </>
+              )}
+              {syncStatus === "syncing" && (
+                <>
+                  <ArrowsClockwise size={16} weight="bold" className="animate-spin" />
+                  <span className="hidden sm:inline">Sincronizando...</span>
+                </>
+              )}
+              {syncStatus === "error" && (
+                <>
+                  <CloudSlash size={16} weight="bold" />
+                  <span className="hidden sm:inline">Reconectar</span>
+                </>
+              )}
+              {syncStatus === "local" && (
+                <>
+                  <HardDrives size={16} weight="bold" />
+                  <span className="hidden sm:inline">Modo local</span>
+                </>
+              )}
+            </button>
+
+            {/* Perfil del Operador y Rol */}
+            <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-bold dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
+              <span className="capitalize text-zinc-900 dark:text-zinc-100 max-w-[100px] truncate sm:max-w-none">
+                {currentUser?.username || "Operador"}
+              </span>
+              <span className="rounded-lg bg-zinc-100 px-2 py-0.5 text-[10px] uppercase tracking-wider text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {currentUser?.role || (userRole === "admin" ? "Administrador" : userRole === "stock" ? "Stock" : "Cajero")}
+              </span>
             </div>
+
             <button className="btn-icon" aria-label="Cambiar tema" onClick={onToggleTheme}>
               <Sun size={22} weight="bold" className="hidden dark:block" />
               <Moon size={22} weight="bold" className="dark:hidden" />
@@ -99,12 +183,16 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
           </div>
         )}
 
-        <main><Page /></main>
+        <main>
+          <ErrorBoundary key={tab}>
+            <Page />
+          </ErrorBoundary>
+        </main>
       </div>
 
       <nav aria-label="Secciones" className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-zinc-800 dark:bg-zinc-950 md:hidden">
-        <ul className="grid grid-cols-4 gap-1 p-2">
-          {TABS.map(({ id, label, icon: Icon }) => {
+        <ul className={`grid gap-1 p-2 ${availableTabs.length === 2 ? "grid-cols-2" : availableTabs.length === 3 ? "grid-cols-3" : "grid-cols-4"}`}>
+          {availableTabs.map(({ id, label, icon: Icon }) => {
             const on = tab === id;
             return (
               <li key={id}>
@@ -127,6 +215,29 @@ function MainApp() {
   const [theme, setTheme] = useStored("theme", null);
   const [currentUser, setCurrentUser] = useStored("auth_user", null);
 
+  // Verificación y sincronización de sesión al cargar la app con refresco reactivo de tokens
+  useEffect(() => {
+    async function syncAuth() {
+      try {
+        const session = await authService.getCurrentSession();
+        if (session) {
+          setCurrentUser(session);
+        }
+      } catch (err) {
+        console.warn("No se pudo restaurar la sesión:", err);
+      }
+    }
+    syncAuth();
+
+    const unsubscribe = authService.onAuthStateChange((user) => {
+      setCurrentUser(user);
+    });
+
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [setCurrentUser]);
+
   useEffect(() => {
     const dark = theme ? theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
     document.documentElement.classList.toggle("dark", dark);
@@ -134,6 +245,11 @@ function MainApp() {
 
   const isDark = () => document.documentElement.classList.contains("dark");
   const toggleTheme = () => setTheme(isDark() ? "light" : "dark");
+
+  const handleLogout = async () => {
+    await authService.signOut();
+    setCurrentUser(null);
+  };
 
   if (!currentUser) {
     return (
@@ -148,7 +264,7 @@ function MainApp() {
   return (
     <Shell
       currentUser={currentUser}
-      onLogout={() => setCurrentUser(null)}
+      onLogout={handleLogout}
       onToggleTheme={toggleTheme}
       isDark={isDark}
     />
