@@ -1,11 +1,10 @@
 /**
- * Capa de Persistencia Offline en IndexedDB para Terminal POS y Carnicería
+ * Capa de Persistencia Local Segura en IndexedDB para Terminal POS
  * 
- * Ventajas sobre localStorage:
- * - Capacidad de almacenamiento de gigabytes (sin límite de 5MB).
- * - Escritura asíncrona sin bloquear el hilo de ejecución principal ni la UI táctil.
- * - Soporte nativo de objetos estructurados sin sobrecarga de JSON.stringify masivo.
- * - Migración automática transparente desde localStorage al iniciar.
+ * Cumplimiento de directiva:
+ * - NINGÚN dato de negocio sensible ni transaccional se guarda en localStorage.
+ * - IndexedDB opera como réplica aislada en el sandbox del navegador.
+ * - Si IndexedDB no está disponible, se mantiene en memoria volátil de sesión.
  */
 
 const DB_NAME = "carniceria_pos_db";
@@ -14,6 +13,37 @@ const STORE_NAME = "collections";
 
 let dbInstance = null;
 let dbPromise = null;
+const memoryFallback = new Map();
+
+/**
+ * Purgado preventivo de cualquier residuo comercial o de autenticación en localStorage
+ */
+export function purgeSensitiveLocalStorage() {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  const SENSITIVE_KEYS = [
+    "ca:products",
+    "ca:customers",
+    "ca:sales",
+    "ca:payments",
+    "ca:movements",
+    "ca:sync_outbox",
+    "ca:auth-session",
+    "ca:auth_user",
+    "ca:cash_movements",
+    "ca:suppliers",
+    "ca:supplier_purchases",
+    "ca:supplier_payments",
+  ];
+  try {
+    for (const k of SENSITIVE_KEYS) {
+      if (localStorage.getItem(k) !== null) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch (e) {
+    console.warn("No se pudo purgar localStorage sensible:", e);
+  }
+}
 
 function openDatabase() {
   if (dbInstance) return Promise.resolve(dbInstance);
@@ -40,11 +70,11 @@ function openDatabase() {
       };
 
       request.onerror = (err) => {
-        console.warn("No se pudo inicializar IndexedDB, operando con memoria local:", err);
+        console.warn("IndexedDB no disponible, operando en memoria:", err);
         resolve(null);
       };
     } catch (e) {
-      console.warn("Excepción al abrir IndexedDB:", e);
+      console.warn("Excepción al inicializar IndexedDB:", e);
       resolve(null);
     }
   });
@@ -53,14 +83,13 @@ function openDatabase() {
 }
 
 /**
- * Obtiene una colección almacenada en IndexedDB con fallback y migración desde localStorage
+ * Obtiene una colección almacenada en IndexedDB (sin tocar localStorage)
  */
 export async function idbGet(key, defaultValue = null) {
   try {
     const db = await openDatabase();
     if (!db) {
-      const raw = localStorage.getItem("ca:" + key);
-      return raw ? JSON.parse(raw) : defaultValue;
+      return memoryFallback.has(key) ? memoryFallback.get(key) : defaultValue;
     }
 
     return new Promise((resolve) => {
@@ -73,17 +102,6 @@ export async function idbGet(key, defaultValue = null) {
           if (req.result !== undefined && req.result !== null) {
             resolve(req.result);
           } else {
-            // Migración automática: si no está en IndexedDB, buscar en localStorage
-            try {
-              const legacyRaw = localStorage.getItem("ca:" + key);
-              if (legacyRaw) {
-                const parsed = JSON.parse(legacyRaw);
-                idbSet(key, parsed); // Guardar en IndexedDB para próximas lecturas
-                return resolve(parsed);
-              }
-            } catch {
-              // Ignorar errores de parseo
-            }
             resolve(defaultValue);
           }
         };
@@ -99,18 +117,14 @@ export async function idbGet(key, defaultValue = null) {
 }
 
 /**
- * Guarda una colección en IndexedDB de forma asíncrona
+ * Guarda una colección en IndexedDB (sin tocar localStorage)
  */
 export async function idbSet(key, value) {
   try {
     const db = await openDatabase();
     if (!db) {
-      try {
-        localStorage.setItem("ca:" + key, JSON.stringify(value));
-      } catch {
-        window.dispatchEvent(new CustomEvent("ca:storage-full"));
-      }
-      return;
+      memoryFallback.set(key, value);
+      return true;
     }
 
     return new Promise((resolve) => {
@@ -126,6 +140,7 @@ export async function idbSet(key, value) {
     });
   } catch (err) {
     console.warn(`Error al escribir en IndexedDB [${key}]:`, err);
+    memoryFallback.set(key, value);
   }
 }
 
@@ -134,11 +149,10 @@ export async function idbSet(key, value) {
  */
 export async function idbDelete(key) {
   try {
+    memoryFallback.delete(key);
     const db = await openDatabase();
-    if (!db) {
-      localStorage.removeItem("ca:" + key);
-      return;
-    }
+    if (!db) return;
+
     return new Promise((resolve) => {
       try {
         const tx = db.transaction(STORE_NAME, "readwrite");
@@ -154,12 +168,14 @@ export async function idbDelete(key) {
 }
 
 /**
- * Limpia todas las colecciones locales
+ * Limpia la base de datos local
  */
 export async function idbClear() {
   try {
+    memoryFallback.clear();
     const db = await openDatabase();
     if (!db) return;
+
     return new Promise((resolve) => {
       try {
         const tx = db.transaction(STORE_NAME, "readwrite");
@@ -173,4 +189,3 @@ export async function idbClear() {
     });
   } catch {}
 }
-

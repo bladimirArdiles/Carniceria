@@ -3,7 +3,7 @@ import { Check, CheckCircle, CircleNotch, CurrencyDollar, Money, Printer, Scales
 import Modal from "../ui/Modal.jsx";
 import { fmtDateTime, fmtLongDate, money, num } from "../../lib/format.js";
 
-export default function CashClosingModal({ sales, payments, dateLabel, onClose, onSaveClosing }) {
+export default function CashClosingModal({ sales, payments, cashMovements = [], dateLabel, onClose, onSaveClosing }) {
   const [countedCash, setCountedCash] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -16,47 +16,71 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose, 
     let creditSales = 0;
     let totalKilos = 0;
 
-    sales.forEach((s) => {
-      if (s.method === "Efectivo") cashSales += s.total;
-      else if (s.method === "Transferencia") transferSales += s.total;
-      else if (s.method === "Tarjeta") cardSales += s.total;
-      else if (s.method === "Fiado") creditSales += s.total;
+    (sales || []).forEach((s) => {
+      if (!s || s.status === "voided") return;
+      const tot = Number(s.total || 0);
+      if (s.method === "Efectivo") cashSales += tot;
+      else if (s.method === "Transferencia") transferSales += tot;
+      else if (s.method === "Tarjeta") cardSales += tot;
+      else if (s.method === "Fiado") creditSales += tot;
 
-      s.items?.forEach((i) => {
-        if (i.unit === "kg") totalKilos += i.qty;
+      (s.items || []).forEach((i) => {
+        if (i.unit === "kg") totalKilos += Number(i.qty || 0);
       });
     });
 
     let cashPayments = 0;
     let transferPayments = 0;
+    let cardPayments = 0;
 
     (payments || []).forEach((p) => {
-      if (p.method === "Efectivo") cashPayments += p.amount;
-      else if (p.method === "Transferencia") transferPayments += p.amount;
+      if (!p) return;
+      const amt = Number(p.amount || 0);
+      if (p.method === "Efectivo") cashPayments += amt;
+      else if (p.method === "Transferencia") transferPayments += amt;
+      else if (p.method === "Tarjeta") cardPayments += amt;
     });
 
-    const expectedCash = cashSales + cashPayments;
-    const totalLiquid = expectedCash + transferSales + transferPayments + cardSales;
-    const totalSales = cashSales + transferSales + cardSales + creditSales;
+    let totalCashExpenses = 0;
+    let totalCashInflows = 0;
+
+    (cashMovements || []).forEach((m) => {
+      if (!m) return;
+      const amt = Number(m.amount || 0);
+      if (m.type === "egreso") totalCashExpenses += amt;
+      else if (m.type === "ingreso") totalCashInflows += amt;
+    });
+
+    const expectedCash = Math.round(cashSales + cashPayments + totalCashInflows - totalCashExpenses);
+    const totalTransfers = Math.round(transferSales + transferPayments);
+    const totalCards = Math.round(cardSales + cardPayments);
+    const totalLiquid = expectedCash + totalTransfers + totalCards;
+    const totalSales = Math.round(cashSales + transferSales + cardSales + creditSales);
+    const validSalesCount = (sales || []).filter((s) => s && s.status !== "voided").length;
 
     return {
-      cashSales,
-      transferSales,
-      cardSales,
-      creditSales,
-      cashPayments,
-      transferPayments,
+      cashSales: Math.round(cashSales),
+      transferSales: Math.round(transferSales),
+      cardSales: Math.round(cardSales),
+      creditSales: Math.round(creditSales),
+      cashPayments: Math.round(cashPayments),
+      transferPayments: Math.round(transferPayments),
+      cardPayments: Math.round(cardPayments),
+      totalCashExpenses: Math.round(totalCashExpenses),
+      totalCashInflows: Math.round(totalCashInflows),
       expectedCash,
+      totalTransfers,
+      totalCards,
       totalLiquid,
       totalSales,
-      totalKilos,
-      ticketCount: sales.length,
-      avgTicket: sales.length > 0 ? Math.round(totalSales / sales.length) : 0,
+      totalKilos: Math.round(totalKilos * 1000) / 1000,
+      ticketCount: validSalesCount,
+      avgTicket: validSalesCount > 0 ? Math.round(totalSales / validSalesCount) : 0,
     };
-  }, [sales, payments]);
+  }, [sales, payments, cashMovements]);
 
-  const physicalCash = parseFloat(String(countedCash).replace(",", ".")) || 0;
-  const cashDifference = countedCash !== "" ? physicalCash - stats.expectedCash : null;
+  const physicalCash = countedCash !== "" ? parseFloat(String(countedCash).trim().replace(",", ".")) || 0 : 0;
+  const cashDifference = countedCash !== "" ? Math.round(physicalCash - stats.expectedCash) : null;
 
   const handlePrint = async () => {
     if (onSaveClosing && !savedSuccess) {
@@ -111,13 +135,25 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose, 
 
           <div className="text-xs text-zinc-600 dark:text-zinc-400 space-y-1 border-t border-zinc-100 pt-2 dark:border-zinc-800">
             <div className="flex justify-between">
-              <span>Efectivo por ventas mostrador:</span>
+              <span>(+) Efectivo por ventas mostrador:</span>
               <span className="font-mono font-semibold">{money(stats.cashSales)}</span>
             </div>
             {stats.cashPayments > 0 && (
               <div className="flex justify-between">
-                <span>Efectivo cobrado de fiados:</span>
+                <span>(+) Cobros de fiados en efectivo:</span>
                 <span className="font-mono font-semibold">+{money(stats.cashPayments)}</span>
+              </div>
+            )}
+            {stats.totalCashInflows > 0 && (
+              <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-semibold">
+                <span>(+) Ingresos / Fondos de cambio:</span>
+                <span className="font-mono">+{money(stats.totalCashInflows)}</span>
+              </div>
+            )}
+            {stats.totalCashExpenses > 0 && (
+              <div className="flex justify-between text-red-700 dark:text-red-400 font-semibold">
+                <span>(-) Egresos / Retiros de caja:</span>
+                <span className="font-mono">-{money(stats.totalCashExpenses)}</span>
               </div>
             )}
           </div>
@@ -191,11 +227,11 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose, 
             </div>
             <div className="flex justify-between py-1.5">
               <span>Transferencias / QR:</span>
-              <span className="font-mono font-bold">{money(stats.transferSales + stats.transferPayments)}</span>
+              <span className="font-mono font-bold">{money(stats.totalTransfers)}</span>
             </div>
             <div className="flex justify-between py-1.5">
               <span>Tarjetas débito / crédito:</span>
-              <span className="font-mono font-bold">{money(stats.cardSales)}</span>
+              <span className="font-mono font-bold">{money(stats.totalCards)}</span>
             </div>
             <div className="flex justify-between py-1.5 text-amber-700 dark:text-amber-400">
               <span>Fiados emitidos (a cobrar):</span>
@@ -280,8 +316,8 @@ export default function CashClosingModal({ sales, payments, dateLabel, onClose, 
             )}
           </div>
           <div className="space-y-1 border-b py-2">
-            <div className="flex justify-between"><span>Transferencias:</span><span>{money(stats.transferSales + stats.transferPayments)}</span></div>
-            <div className="flex justify-between"><span>Tarjetas:</span><span>{money(stats.cardSales)}</span></div>
+            <div className="flex justify-between"><span>Transferencias:</span><span>{money(stats.totalTransfers)}</span></div>
+            <div className="flex justify-between"><span>Tarjetas:</span><span>{money(stats.totalCards)}</span></div>
             <div className="flex justify-between"><span>Fiados Emitidos:</span><span>{money(stats.creditSales)}</span></div>
             <div className="flex justify-between font-bold text-sm pt-1"><span>TOTAL DINERO LÍQUIDO:</span><span>{money(stats.totalLiquid)}</span></div>
           </div>

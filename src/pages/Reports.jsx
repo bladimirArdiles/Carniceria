@@ -2,13 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarBlank,
   ChartBar,
+  CircleNotch,
+  Coins,
   CreditCard,
   DownloadSimple,
   FileCsv,
   Funnel,
   Printer,
   Receipt,
+  ShieldCheck,
+  TrendDown,
+  TrendUp,
   UploadSimple,
+  Wallet,
   X,
 } from "@phosphor-icons/react";
 import { useStore } from "../lib/store.jsx";
@@ -18,6 +24,7 @@ import LineChart from "../components/ui/LineChart.jsx";
 import Segmented from "../components/ui/Segmented.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ConfirmButton from "../components/ui/ConfirmButton.jsx";
+import Modal from "../components/ui/Modal.jsx";
 import CashClosingModal from "../components/reports/CashClosingModal.jsx";
 import ReceiptModal from "../components/pos/ReceiptModal.jsx";
 
@@ -48,15 +55,32 @@ function Metric({ label, value, hint }) {
 }
 
 export default function Reports() {
-  const { sales, balances, customers, payments, voidSale, saveCashClosing, loadSalesRange, exportAll, importAll, notify } = useStore();
+  const {
+    sales,
+    balances,
+    customers,
+    payments,
+    cashMovements,
+    products,
+    supplierPayments,
+    getAuditLogs,
+    voidSale,
+    saveCashClosing,
+    loadSalesRange,
+    exportAll,
+    importAll,
+    notify,
+  } = useStore();
+
+  const [reportTab, setReportTab] = useState("commercial"); // "commercial" | "financial"
 
   const now = new Date();
   const todayStr = dayKey(now);
   const currentYearStr = String(now.getFullYear());
   const currentMonthStr = String(now.getMonth() + 1);
 
-  // Modo de fecha: "month" | "day" | "range" | "all"
-  const [dateMode, setDateMode] = useState("month");
+  // Modo de fecha: "day" | "month" | "range" | "all"
+  const [dateMode, setDateMode] = useState("day");
   const [filterYear, setFilterYear] = useState(currentYearStr);
   const [filterMonth, setFilterMonth] = useState(currentMonthStr);
   const [exactDate, setExactDate] = useState(todayStr);
@@ -75,9 +99,12 @@ export default function Reports() {
   const [visibleSalesCount, setVisibleSalesCount] = useState(10);
   const fileRef = useRef(null);
 
-  // Modales de Fase 6: Cierre de Caja Z y Reimpresión de Comprobante
+  // Modales: Cierre de Caja Z, Reimpresión y Bitácora de Auditoría
   const [showCashClosing, setShowCashClosing] = useState(false);
   const [selectedSaleForReceipt, setSelectedSaleForReceipt] = useState(null);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
 
   const availableYears = useMemo(() => {
     const years = new Set(sales.map((s) => new Date(s.date).getFullYear()));
@@ -102,27 +129,86 @@ export default function Reports() {
     }
   }, [dateMode, startDate, endDate, exactDate, filterYear, filterMonth, loadSalesRange]);
 
-  // Filtrado integral por fecha y método de pago
+  // Filtrado integral por fecha y método de pago con cálculo estricto en hora local
   const filteredSales = useMemo(() => {
     return sales.filter((s) => {
+      if (!s || s.status === "voided") return false;
+
       // Filtro por método de pago
       if (filterMethod !== "all" && s.method !== filterMethod) return false;
 
-      // Filtro por fecha
-      const datePart = s.date.slice(0, 10);
+      // Filtro por fecha usando fecha local estricta
+      const saleDay = dayKey(s.date);
       if (dateMode === "day") {
-        if (exactDate && datePart !== exactDate) return false;
+        if (exactDate && saleDay !== exactDate) return false;
       } else if (dateMode === "range") {
-        if (startDate && datePart < startDate) return false;
-        if (endDate && datePart > endDate) return false;
+        if (startDate && saleDay < startDate) return false;
+        if (endDate && saleDay > endDate) return false;
       } else if (dateMode === "month") {
         const d = new Date(s.date);
-        if (filterYear !== "all" && d.getFullYear() !== Number(filterYear)) return false;
-        if (filterMonth !== "all" && d.getMonth() + 1 !== Number(filterMonth)) return false;
+        if (filterYear !== "all" && String(d.getFullYear()) !== filterYear) return false;
+        if (filterMonth !== "all" && String(d.getMonth() + 1) !== filterMonth) return false;
       }
       return true;
     });
   }, [sales, filterMethod, dateMode, exactDate, startDate, endDate, filterYear, filterMonth]);
+
+  // Pagos reales cobrados filtrados estrictamente por el mismo período
+  const filteredPayments = useMemo(() => {
+    return (payments || []).filter((p) => {
+      if (!p) return false;
+      const pDay = dayKey(p.date || p.created_at);
+      if (dateMode === "day") {
+        if (exactDate && pDay !== exactDate) return false;
+      } else if (dateMode === "range") {
+        if (startDate && pDay < startDate) return false;
+        if (endDate && pDay > endDate) return false;
+      } else if (dateMode === "month") {
+        const d = new Date(p.date || p.created_at);
+        if (filterYear !== "all" && String(d.getFullYear()) !== filterYear) return false;
+        if (filterMonth !== "all" && String(d.getMonth() + 1) !== filterMonth) return false;
+      }
+      return true;
+    });
+  }, [payments, dateMode, exactDate, startDate, endDate, filterYear, filterMonth]);
+
+  // Movimientos y egresos de caja filtrados estrictamente por el período
+  const filteredCashMovements = useMemo(() => {
+    return (cashMovements || []).filter((m) => {
+      if (!m) return false;
+      const mDay = dayKey(m.date || m.created_at);
+      if (dateMode === "day") {
+        if (exactDate && mDay !== exactDate) return false;
+      } else if (dateMode === "range") {
+        if (startDate && mDay < startDate) return false;
+        if (endDate && mDay > endDate) return false;
+      } else if (dateMode === "month") {
+        const d = new Date(m.date || m.created_at);
+        if (filterYear !== "all" && String(d.getFullYear()) !== filterYear) return false;
+        if (filterMonth !== "all" && String(d.getMonth() + 1) !== filterMonth) return false;
+      }
+      return true;
+    });
+  }, [cashMovements, dateMode, exactDate, startDate, endDate, filterYear, filterMonth]);
+
+  // Pagos a proveedores filtrados estrictamente por el período
+  const filteredSupplierPayments = useMemo(() => {
+    return (supplierPayments || []).filter((p) => {
+      if (!p) return false;
+      const pDay = dayKey(p.date || p.createdAt);
+      if (dateMode === "day") {
+        if (exactDate && pDay !== exactDate) return false;
+      } else if (dateMode === "range") {
+        if (startDate && pDay < startDate) return false;
+        if (endDate && pDay > endDate) return false;
+      } else if (dateMode === "month") {
+        const d = new Date(p.date || p.createdAt);
+        if (filterYear !== "all" && String(d.getFullYear()) !== filterYear) return false;
+        if (filterMonth !== "all" && String(d.getMonth() + 1) !== filterMonth) return false;
+      }
+      return true;
+    });
+  }, [supplierPayments, dateMode, exactDate, startDate, endDate, filterYear, filterMonth]);
 
   // Etiqueta legible del período
   const periodLabel = useMemo(() => {
@@ -154,7 +240,15 @@ export default function Reports() {
     return filterMethod !== "all" ? `${periodLabel} • ${filterMethod}` : periodLabel;
   }, [periodLabel, filterMethod]);
 
-  const s = useMemo(() => summarize(sales, balances, filteredSales), [sales, balances, filteredSales]);
+  const s = useMemo(
+    () =>
+      summarize(sales, balances, filteredSales, {
+        products,
+        cashMovements: filteredCashMovements,
+        supplierPayments: filteredSupplierPayments,
+      }),
+    [sales, balances, filteredSales, products, filteredCashMovements, filteredSupplierPayments]
+  );
 
   const filterOptions = useMemo(() => ({
     mode: dateMode,
@@ -208,7 +302,7 @@ export default function Reports() {
 
     const headers = [
       "Fecha y Hora",
-      "ID Venta",
+      "Nro Ticket / ID",
       "Cliente",
       "DNI Cliente",
       "Metodo de Pago",
@@ -217,34 +311,54 @@ export default function Reports() {
       "Total Venta ($)",
     ];
 
+    let grandTotalRevenue = 0;
+    let grandTotalKilos = 0;
+
     const rows = filteredSales.map((s) => {
       const client = customers.find((c) => c.id === s.customerId);
-      const itemsSummary = s.items
-        ?.map((i) => `${i.name} (${num(i.qty)} ${i.unit})`)
+      const itemsSummary = (s.items || [])
+        .map((i) => `${i.name} (${num(i.qty)} ${i.unit})`)
         .join(" + ");
-      const totalKilos =
-        s.items
-          ?.filter((i) => i.unit === "kg")
-          .reduce((acc, i) => acc + i.qty, 0) || 0;
+      const totalKilos = (s.items || [])
+        .filter((i) => i.unit === "kg")
+        .reduce((acc, i) => acc + Number(i.qty || 0), 0);
+
+      grandTotalRevenue += Number(s.total || 0);
+      grandTotalKilos += totalKilos;
+
+      const ticketRef = s.ticketNumber ? `#${s.ticketNumber}` : (s.id ? s.id.slice(0, 8) : "-");
 
       return [
         `"${fmtDateTime(s.date)}"`,
-        `"${s.id}"`,
-        `"${client ? client.name : "Mostrador"}"`,
+        `"${ticketRef}"`,
+        `"${client ? client.name.replace(/"/g, '""') : "Mostrador"}"`,
         `"${client?.dni || ""}"`,
         `"${s.method}"`,
-        `"${itemsSummary || ""}"`,
-        `"${num(totalKilos)}"`,
-        s.total,
+        `"${itemsSummary.replace(/"/g, '""')}"`,
+        `"${num(Math.round(totalKilos * 1000) / 1000)}"`,
+        Math.round(s.total),
       ];
     });
+
+    // Fila final de totales exactos
+    rows.push([
+      `"TOTALES (${periodLabel})"`,
+      `"${filteredSales.length} ventas"`,
+      `""`,
+      `""`,
+      `""`,
+      `""`,
+      `"${num(Math.round(grandTotalKilos * 1000) / 1000)}"`,
+      Math.round(grandTotalRevenue),
+    ]);
 
     const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\r\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `ventas-carniceria-${dateMode === "day" ? exactDate : dayKey()}.csv`);
+    const safeDate = dateMode === "day" ? exactDate : periodLabel.replace(/[^\w\d-_]/g, "_");
+    link.setAttribute("download", `ventas-carniceria-${safeDate}.csv`);
     link.click();
     URL.revokeObjectURL(url);
     notify("Planilla de ventas descargada en formato Excel");
@@ -261,26 +375,47 @@ export default function Reports() {
     });
   };
 
+  const handleOpenAudit = async () => {
+    setShowAuditModal(true);
+    setIsLoadingAudit(true);
+    try {
+      const logs = await getAuditLogs(50);
+      setAuditLogs(logs || []);
+    } catch {
+      setAuditLogs([]);
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Botones de acción principales: Cierre de Caja Z y Exportar CSV */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Botones de acción principales: Cierre de Caja Z, Exportar CSV y Auditoría */}
+      <div className="grid gap-3 sm:grid-cols-3">
         <button
           type="button"
           onClick={() => setShowCashClosing(true)}
-          className="btn-primary h-16 text-lg shadow-md flex items-center justify-center gap-2.5"
+          className="btn-primary h-16 text-base font-bold shadow-md flex items-center justify-center gap-2"
         >
-          <Receipt size={24} weight="bold" />
-          <span>Cierre de Caja Diario (Reporte Z)</span>
+          <Receipt size={22} weight="bold" />
+          <span>Cierre de Caja (Reporte Z)</span>
         </button>
         <button
           type="button"
           onClick={exportSalesCSV}
           disabled={!filteredSales.length}
-          className="btn-ghost h-16 text-lg font-bold flex items-center justify-center gap-2.5"
+          className="btn-ghost h-16 text-base font-bold flex items-center justify-center gap-2"
         >
-          <FileCsv size={24} weight="bold" />
+          <FileCsv size={22} weight="bold" />
           <span>Exportar a Excel (CSV)</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleOpenAudit}
+          className="btn-ghost h-16 text-base font-bold flex items-center justify-center gap-2"
+        >
+          <ShieldCheck size={22} weight="bold" className="text-accent-600 dark:text-accent-400" />
+          <span>Bitácora de Auditoría</span>
         </button>
       </div>
 
@@ -602,21 +737,189 @@ export default function Reports() {
         </div>
       </section>
 
-      {/* Tarjetas de métricas del período */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Metric label="Ventas de hoy" value={money(s.todayTotal)} hint={`${s.todayCount} ${s.todayCount === 1 ? "venta" : "ventas"}`} />
-        <Metric
-          label={`Ventas (${periodLabel})`}
-          value={money(s.periodTotal)}
-          hint={`${s.periodCount} ${s.periodCount === 1 ? "venta" : "ventas"}${filterMethod !== "all" ? ` por ${filterMethod}` : ""}`}
-        />
-        <Metric
-          label={`Kilos vendidos (${periodLabel})`}
-          value={`${num(s.periodKilos)} kg`}
-          hint={s.periodAvg > 0 ? `Ticket prom. ${money(s.periodAvg)}` : undefined}
-        />
-        <Metric label="Fiado por cobrar" value={money(s.pending)} hint="Saldo total adeudado" />
+      {/* Selector de Vista: Comercial vs Financiera / Margen del Dueño */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-2 dark:border-zinc-800">
+        <div className="flex rounded-2xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setReportTab("commercial")}
+            className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition active:scale-95 ${
+              reportTab === "commercial"
+                ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-50"
+            }`}
+          >
+            <ChartBar size={16} weight="bold" />
+            Vista Comercial (Ventas)
+          </button>
+          <button
+            type="button"
+            onClick={() => setReportTab("financial")}
+            className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition active:scale-95 ${
+              reportTab === "financial"
+                ? "bg-accent-500 text-zinc-950 shadow-sm font-extrabold"
+                : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-50"
+            }`}
+          >
+            <Coins size={16} weight="bold" />
+            Gastos y Margen del Dueño
+          </button>
+        </div>
+
+        {reportTab === "financial" && (
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 shadow-sm">
+            <TrendUp size={16} weight="bold" />
+            <span>Margen Neto: {s.netMarginPct}% sobre facturación</span>
+          </div>
+        )}
       </div>
+
+      {/* Tarjetas de métricas del período */}
+      {reportTab === "commercial" ? (
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <Metric label="Ventas de hoy" value={money(s.todayTotal)} hint={`${s.todayCount} ${s.todayCount === 1 ? "venta" : "ventas"}`} />
+          <Metric
+            label={`Ventas (${periodLabel})`}
+            value={money(s.periodTotal)}
+            hint={`${s.periodCount} ${s.periodCount === 1 ? "venta" : "ventas"}${filterMethod !== "all" ? ` por ${filterMethod}` : ""}`}
+          />
+          <Metric
+            label={`Kilos vendidos (${periodLabel})`}
+            value={`${num(s.periodKilos)} kg`}
+            hint={s.periodAvg > 0 ? `Ticket prom. ${money(s.periodAvg)}` : undefined}
+          />
+          <Metric label="Fiado por cobrar" value={money(s.pending)} hint="Saldo total adeudado" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <div className="card">
+              <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Facturación bruta ({periodLabel})</p>
+              <p className="mt-1 font-mono text-2xl font-black tracking-tight text-zinc-950 dark:text-zinc-50">
+                {money(s.periodTotal)}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">{s.periodCount} ventas registradas</p>
+            </div>
+
+            <div className="card">
+              <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Gastos totales carnicería</p>
+              <p className="mt-1 font-mono text-2xl font-black tracking-tight text-red-600 dark:text-red-400">
+                -{money(s.periodExpenses)}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                {Object.keys(s.expensesByCategory).length} rubros operativos
+              </p>
+            </div>
+
+            <div className="card">
+              <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">Costo de mercadería (CMV)</p>
+              <p className="mt-1 font-mono text-2xl font-black tracking-tight text-amber-600 dark:text-amber-400">
+                -{money(s.periodCost)}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Margen Bruto: {money(s.grossProfit)} ({s.grossMarginPct}%)
+              </p>
+            </div>
+
+            <div className={`card ${
+              s.netProfit >= 0
+                ? "border-emerald-500/40 bg-emerald-50/40 dark:border-emerald-500/30 dark:bg-emerald-950/20"
+                : "border-red-500/40 bg-red-50/40 dark:border-red-500/30 dark:bg-red-950/20"
+            }`}>
+              <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300">🏆 Ganancia Neta Real (Dueño)</p>
+              <p className={`mt-1 font-mono text-2xl font-black tracking-tight ${
+                s.netProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"
+              }`}>
+                {money(s.netProfit)}
+              </p>
+              <p className="mt-1 text-xs font-bold text-zinc-600 dark:text-zinc-400">
+                Margen Neto: {s.netMarginPct}% en mano
+              </p>
+            </div>
+          </div>
+
+          {/* Desglose de Gastos Operativos y Fórmula de Rendimiento */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Panel de Desglose de Gastos */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm space-y-3">
+              <div className="flex items-center justify-between border-b border-zinc-200 pb-2 dark:border-zinc-800">
+                <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                  <Wallet size={16} weight="bold" className="text-red-500" />
+                  Desglose de Gastos de la Carnicería ({periodLabel})
+                </h3>
+                <span className="font-mono text-xs font-bold text-red-600 dark:text-red-400">
+                  Total: -{money(s.periodExpenses)}
+                </span>
+              </div>
+
+              {Object.keys(s.expensesByCategory).length === 0 ? (
+                <p className="py-4 text-center text-xs text-zinc-500">
+                  No se registraron egresos de caja ni gastos en este período.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {Object.entries(s.expensesByCategory)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([cat, amount]) => {
+                      const pct = s.periodExpenses > 0 ? Math.round((amount / s.periodExpenses) * 100) : 0;
+                      return (
+                        <div key={cat} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span className="text-zinc-700 dark:text-zinc-300">{cat}</span>
+                            <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">
+                              {money(amount)} <span className="font-normal text-zinc-400 text-[10px]">({pct}%)</span>
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                            <div
+                              className="h-full bg-red-500 rounded-full transition-all"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Panel de Ecuación Financiera de Utilidad */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm space-y-3">
+              <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5 border-b border-zinc-200 pb-2 dark:border-zinc-800">
+                <Coins size={16} weight="bold" className="text-emerald-500" />
+                Cálculo de Utilidad Neta Real del Dueño
+              </h3>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-850">
+                  <span className="font-semibold text-zinc-600 dark:text-zinc-400">(+) Facturación Bruta:</span>
+                  <span className="font-mono font-bold text-zinc-950 dark:text-zinc-50">{money(s.periodTotal)}</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-850">
+                  <span className="font-semibold text-zinc-600 dark:text-zinc-400">(-) Costo Mercadería (CMV gancho):</span>
+                  <span className="font-mono font-bold text-amber-600 dark:text-amber-400">-{money(s.periodCost)}</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 font-bold">
+                  <span className="text-zinc-700 dark:text-zinc-300">(=) Utilidad Bruta Comercial:</span>
+                  <span className="font-mono text-zinc-900 dark:text-zinc-100">{money(s.grossProfit)}</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-850">
+                  <span className="font-semibold text-zinc-600 dark:text-zinc-400">(-) Gastos Operativos de Carnicería:</span>
+                  <span className="font-mono font-bold text-red-600 dark:text-red-400">-{money(s.periodExpenses)}</span>
+                </div>
+                <div className={`flex items-center justify-between p-2.5 rounded-xl border font-bold text-sm ${
+                  s.netProfit >= 0
+                    ? "border-emerald-500/40 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    : "border-red-500/40 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-950/40 dark:text-red-200"
+                }`}>
+                  <span>(=) Ganancia Neta Real en Mano:</span>
+                  <span className="font-mono text-base font-black">{money(s.netProfit)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Gráfica y Productos / Medios de pago */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
@@ -753,11 +1056,12 @@ export default function Reports() {
         </div>
       </section>
 
-      {/* Modal de Cierre de Caja Z */}
+      {/* Modal de Cierre de Caja Z con cálculo estricto de egresos */}
       {showCashClosing && (
         <CashClosingModal
           sales={filteredSales}
-          payments={payments}
+          payments={filteredPayments}
+          cashMovements={filteredCashMovements}
           dateLabel={periodLabel}
           onClose={() => setShowCashClosing(false)}
           onSaveClosing={saveCashClosing}
@@ -770,6 +1074,67 @@ export default function Reports() {
           sale={selectedSaleForReceipt}
           onClose={() => setSelectedSaleForReceipt(null)}
         />
+      )}
+
+      {/* Modal de Bitácora de Auditoría Antifraude */}
+      {showAuditModal && (
+        <Modal
+          title="Bitácora de Auditoría y Trazabilidad (Inmutable)"
+          onClose={() => setShowAuditModal(false)}
+          size="lg"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              Registro inalterable de operaciones críticas: ventas, anulaciones, movimientos de stock, cobros y salidas de caja.
+            </p>
+
+            {isLoadingAudit ? (
+              <div className="flex h-48 items-center justify-center">
+                <CircleNotch size={28} weight="bold" className="animate-spin text-accent-600" />
+              </div>
+            ) : auditLogs.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-zinc-300 p-8 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-800">
+                No hay registros de auditoría aún o la base de datos está operando en modo local.
+              </div>
+            ) : (
+              <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-800">
+                {auditLogs.map((log) => {
+                  const isVoid = log.action === "VOID_SALE";
+                  const isSale = log.action === "CREATE_SALE";
+                  const isCash = log.action === "CASH_EXPENSE" || log.action === "CASH_INFLOW";
+                  const isPayment = log.action === "CUSTOMER_PAYMENT";
+                  const isStock = log.action === "STOCK_MOVEMENT";
+
+                  return (
+                    <div key={log.id} className="p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+                            isVoid
+                              ? "bg-red-500/20 text-red-800 dark:text-red-300"
+                              : isSale
+                              ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
+                              : isCash
+                              ? "bg-amber-500/20 text-amber-800 dark:text-amber-300"
+                              : "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                          }`}
+                        >
+                          {log.action}
+                        </span>
+                        <span className="font-mono text-[11px] text-zinc-500">
+                          {fmtDateTime(log.created_at)}
+                        </span>
+                      </div>
+                      <p className="font-mono text-zinc-700 dark:text-zinc-300 break-all">
+                        {typeof log.details === "object" ? JSON.stringify(log.details) : log.details}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );

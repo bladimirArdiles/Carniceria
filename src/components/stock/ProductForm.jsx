@@ -26,8 +26,10 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
     const st = toNum(stock);
     if (isNaN(st) || st < 0) return setError("El stock inicial no puede ser negativo.");
 
+    const newId = product?.id || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : uid());
+
     onSave({
-      id: product?.id || uid(),
+      id: newId,
       name: name.trim(),
       category: category.trim() || "Otros",
       unit,

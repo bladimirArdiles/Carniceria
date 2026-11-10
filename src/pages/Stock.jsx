@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { MagnifyingGlass, Minus, Package, PencilSimple, Plus, Scales, Truck, Warning, X } from "@phosphor-icons/react";
+import { MagnifyingGlass, Minus, Package, PencilSimple, Plus, Scales, TrendUp, Truck, Warning, X } from "@phosphor-icons/react";
 import { useStore } from "../lib/store.jsx";
 import { fmtDateTime, getProductCategory, money, num } from "../lib/format.js";
 import Badge, { stockLabel, stockTone } from "../components/ui/Badge.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import MovementForm from "../components/stock/MovementForm.jsx";
 import ProductForm from "../components/stock/ProductForm.jsx";
+import BulkPriceModal from "../components/stock/BulkPriceModal.jsx";
 
 const TYPE_CONFIG = {
   compra: { label: "Ingreso / Compra", tone: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300" },
@@ -14,11 +15,12 @@ const TYPE_CONFIG = {
 };
 
 export default function Stock() {
-  const { products, movements, addMovement, saveProduct, deleteProduct, notify } = useStore();
+  const { products, movements, addMovement, saveProduct, deleteProduct, bulkUpdatePrices, notify } = useStore();
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [movement, setMovement] = useState(null); // { productId?, type? }
   const [editing, setEditing] = useState(null); // null | "new" | product
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const lowCount = useMemo(() => products.filter((p) => stockTone(p) !== "ok").length, [products]);
 
@@ -88,23 +90,32 @@ export default function Stock() {
       </div>
 
       {/* Botones de acción principales */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         <button
           type="button"
-          className="btn-primary h-16 text-lg shadow-md"
+          className="btn-primary h-16 text-base font-bold shadow-md"
           onClick={() => setMovement({})}
           disabled={!products.length}
         >
-          <Truck size={24} weight="bold" />
-          Ingresar stock o registrar merma
+          <Truck size={22} weight="bold" />
+          Ingresar stock / merma
         </button>
         <button
           type="button"
-          className="btn-ghost h-16 text-lg font-bold"
+          className="flex h-16 items-center justify-center gap-2 rounded-2xl border-2 border-accent-500/40 bg-accent-50/50 px-3 text-base font-bold text-zinc-950 transition hover:border-accent-500 hover:bg-accent-100/60 active:scale-95 dark:border-accent-500/30 dark:bg-accent-950/20 dark:text-zinc-50 dark:hover:bg-accent-950/40 shadow-sm"
+          onClick={() => setBulkModalOpen(true)}
+          disabled={!products.length}
+        >
+          <TrendUp size={22} weight="bold" className="text-accent-600 dark:text-accent-400" />
+          Ajuste masivo de precios
+        </button>
+        <button
+          type="button"
+          className="btn-ghost h-16 text-base font-bold"
           onClick={() => setEditing("new")}
         >
-          <Plus size={24} weight="bold" />
-          Nuevo corte / producto
+          <Plus size={22} weight="bold" />
+          Nuevo corte
         </button>
       </div>
 
@@ -303,6 +314,15 @@ export default function Stock() {
             setEditing(null);
             notify("Corte eliminado");
           }}
+        />
+      )}
+
+      {bulkModalOpen && (
+        <BulkPriceModal
+          products={products}
+          categories={categories.filter((c) => c !== "⚠️ Alertas")}
+          onConfirm={bulkUpdatePrices}
+          onClose={() => setBulkModalOpen(false)}
         />
       )}
     </div>

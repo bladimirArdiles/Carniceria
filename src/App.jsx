@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   ArrowsClockwise,
   CashRegister,
@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   SignOut,
   Sun,
+  Truck,
   UsersThree,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -19,16 +20,21 @@ import { useStored } from "./lib/storage.js";
 import { fmtLongDate } from "./lib/format.js";
 import { authService } from "./lib/authService.js";
 import Counter from "./pages/Counter.jsx";
-import Stock from "./pages/Stock.jsx";
-import Customers from "./pages/Customers.jsx";
-import Reports from "./pages/Reports.jsx";
 import Login from "./pages/Login.jsx";
 import ErrorBoundary from "./components/ui/ErrorBoundary.jsx";
+import SyncQueueModal from "./components/layout/SyncQueueModal.jsx";
+
+// Code splitting dinámico: carga diferida para módulos secundarios pesados
+const Stock = lazy(() => import("./pages/Stock.jsx"));
+const Customers = lazy(() => import("./pages/Customers.jsx"));
+const Suppliers = lazy(() => import("./pages/Suppliers.jsx"));
+const Reports = lazy(() => import("./pages/Reports.jsx"));
 
 const ALL_TABS = [
   { id: "counter", label: "Mostrador", title: "Mostrador", icon: CashRegister, Page: Counter, roles: ["admin", "cajero", "stock"] },
   { id: "stock", label: "Stock", title: "Stock e inventario", icon: Package, Page: Stock, roles: ["admin", "stock"] },
   { id: "customers", label: "Clientes", title: "Clientes y fiados", icon: UsersThree, Page: Customers, roles: ["admin", "cajero"] },
+  { id: "suppliers", label: "Proveedores", title: "Proveedores y Cuentas por Pagar", icon: Truck, Page: Suppliers, roles: ["admin"] },
   { id: "reports", label: "Reportes", title: "Reportes de venta y Cierre Z", icon: ChartBar, Page: Reports, roles: ["admin"] },
 ];
 
@@ -50,7 +56,19 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
 
   const [tab, setTab] = useState(availableTabs[0]?.id || "counter");
   const [full, setFull] = useState(false);
-  const { syncStatus, syncWithSupabase, isSupabaseConfigured } = useStore();
+  const [queueModalOpen, setQueueModalOpen] = useState(false);
+  const {
+    syncStatus,
+    syncWithSupabase,
+    syncAllLocalToSupabase,
+    clearOutbox,
+    resetLocalDatabase,
+    isSupabaseConfigured,
+    outbox,
+    outboxCount,
+    isOnline,
+    flushOutbox,
+  } = useStore();
 
   useEffect(() => {
     if (!availableTabs.some((t) => t.id === tab)) {
@@ -101,21 +119,28 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Si hay operaciones pendientes en cola, botón de sincronización offline */}
+            {outboxCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setQueueModalOpen(true)}
+                title="Ver cola de operaciones pendientes de sincronización"
+                className="flex items-center gap-1.5 rounded-2xl border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900 transition active:scale-95 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <CloudSlash size={16} weight="bold" className="text-amber-600 dark:text-amber-400" />
+                <span>{outboxCount} en cola</span>
+              </button>
+            )}
+
             {/* Indicador de Estado y Conexión a Supabase */}
             <button
               type="button"
-              onClick={syncWithSupabase}
-              title={
-                syncStatus === "synced"
-                  ? "Conectado a Supabase PostgreSQL (Clic para forzar sincronización)"
-                  : syncStatus === "syncing"
-                  ? "Sincronizando datos con Supabase..."
-                  : syncStatus === "error"
-                  ? "Error de conexión con Supabase (Clic para reintentar)"
-                  : "Modo almacenamiento local"
-              }
+              onClick={() => setQueueModalOpen(true)}
+              title="Panel de sincronización con Supabase (Clic para abrir)"
               className={`flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-bold transition active:scale-95 ${
-                syncStatus === "synced"
+                !isOnline || syncStatus === "offline"
+                  ? "border-amber-500/40 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+                  : syncStatus === "synced"
                   ? "border-emerald-500/30 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/40 dark:text-emerald-300"
                   : syncStatus === "syncing"
                   ? "border-amber-500/30 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-950/40 dark:text-amber-300"
@@ -124,25 +149,31 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
                   : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
               }`}
             >
-              {syncStatus === "synced" && (
+              {(!isOnline || syncStatus === "offline") && (
+                <>
+                  <CloudSlash size={16} weight="bold" />
+                  <span className="hidden sm:inline">Offline</span>
+                </>
+              )}
+              {isOnline && syncStatus === "synced" && (
                 <>
                   <CloudCheck size={16} weight="bold" />
                   <span className="hidden sm:inline">Supabase BD</span>
                 </>
               )}
-              {syncStatus === "syncing" && (
+              {isOnline && syncStatus === "syncing" && (
                 <>
                   <ArrowsClockwise size={16} weight="bold" className="animate-spin" />
                   <span className="hidden sm:inline">Sincronizando...</span>
                 </>
               )}
-              {syncStatus === "error" && (
+              {isOnline && syncStatus === "error" && (
                 <>
                   <CloudSlash size={16} weight="bold" />
                   <span className="hidden sm:inline">Reconectar</span>
                 </>
               )}
-              {syncStatus === "local" && (
+              {isOnline && syncStatus === "local" && (
                 <>
                   <HardDrives size={16} weight="bold" />
                   <span className="hidden sm:inline">Modo local</span>
@@ -185,7 +216,18 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
 
         <main>
           <ErrorBoundary key={tab}>
-            <Page />
+            <Suspense
+              fallback={
+                <div className="flex min-h-[30vh] items-center justify-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="size-8 animate-spin rounded-full border-4 border-zinc-200 border-t-accent-500 dark:border-zinc-800 dark:border-t-accent-400" />
+                    <p className="text-xs font-semibold text-zinc-500">Cargando...</p>
+                  </div>
+                </div>
+              }
+            >
+              <Page />
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>
@@ -207,13 +249,26 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
       </nav>
 
       <Toast />
+
+      {queueModalOpen && (
+        <SyncQueueModal
+          outbox={outbox}
+          isOnline={isOnline}
+          onSync={flushOutbox}
+          onSyncAll={syncAllLocalToSupabase}
+          onClearQueue={clearOutbox}
+          onResetLocal={resetLocalDatabase}
+          onClose={() => setQueueModalOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 function MainApp() {
   const [theme, setTheme] = useStored("theme", null);
-  const [currentUser, setCurrentUser] = useStored("auth_user", null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   // Verificación y sincronización de sesión al cargar la app con refresco reactivo de tokens
   useEffect(() => {
@@ -225,18 +280,21 @@ function MainApp() {
         }
       } catch (err) {
         console.warn("No se pudo restaurar la sesión:", err);
+      } finally {
+        setIsAuthChecking(false);
       }
     }
     syncAuth();
 
     const unsubscribe = authService.onAuthStateChange((user) => {
       setCurrentUser(user);
+      setIsAuthChecking(false);
     });
 
     return () => {
       if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, [setCurrentUser]);
+  }, []);
 
   useEffect(() => {
     const dark = theme ? theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -250,6 +308,17 @@ function MainApp() {
     await authService.signOut();
     setCurrentUser(null);
   };
+
+  if (isAuthChecking) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="size-8 animate-spin rounded-full border-4 border-zinc-200 border-t-accent-500 dark:border-zinc-800 dark:border-t-accent-400" />
+          <p className="text-sm font-semibold text-zinc-500">Iniciando sistema...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     return (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard, MagnifyingGlass, Receipt, X } from "@phosphor-icons/react";
+import { ArrowUpRight, Keyboard, MagnifyingGlass, Receipt, X } from "@phosphor-icons/react";
 import { useStore } from "../lib/store.jsx";
 import { DEFAULT_CATEGORIES, lineTotal, money, num } from "../lib/format.js";
 import Badge, { stockLabel, stockTone } from "../components/ui/Badge.jsx";
@@ -7,6 +7,7 @@ import Modal from "../components/ui/Modal.jsx";
 import QtyDialog from "../components/pos/QtyDialog.jsx";
 import Ticket from "../components/pos/Ticket.jsx";
 import ReceiptModal from "../components/pos/ReceiptModal.jsx";
+import CashMovementModal from "../components/pos/CashMovementModal.jsx";
 
 // Función para obtener la categoría con deducción inteligente para productos existentes
 export const getProductCategory = (p) => {
@@ -20,7 +21,7 @@ export const getProductCategory = (p) => {
 };
 
 export default function Counter() {
-  const { products, customers, balances, sales, completeSale, notify } = useStore();
+  const { products, customers, balances, sales, completeSale, addCashMovement, notify } = useStore();
   const [lines, setLines] = useState([]);
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("⭐ Frecuentes");
@@ -29,6 +30,7 @@ export default function Counter() {
   const [method, setMethod] = useState("Efectivo");
   const [completedSale, setCompletedSale] = useState(null);
   const [isProcessingSale, setIsProcessingSale] = useState(false);
+  const [showCashMovementModal, setShowCashMovementModal] = useState(false);
 
   // Estados de Fase 3: Atajos de teclado y experiencia mobile
   const searchInputRef = useRef(null);
@@ -82,21 +84,24 @@ export default function Counter() {
       });
   }, [products, query, selectedCategory, frequentProductIds]);
 
-  const setQty = (product, qty, replace) => {
+  const setQty = (product, qty, replace, exactTotal) => {
     setLines((prev) => {
       const cur = prev.find((l) => l.productId === product.id);
       const finalQty = cur && !replace ? Math.round((cur.qty + qty) * 1000) / 1000 : qty;
-      const line = { productId: product.id, name: product.name, unit: product.unit, price: product.price, qty: finalQty, total: lineTotal(finalQty, product.price) };
+      const finalTotal = typeof exactTotal === "number" && exactTotal > 0
+        ? exactTotal
+        : lineTotal(finalQty, product.price);
+      const line = { productId: product.id, name: product.name, unit: product.unit, price: product.price, qty: finalQty, total: finalTotal };
       return cur ? prev.map((l) => (l.productId === product.id ? line : l)) : [...prev, line];
     });
   };
 
-  const onConfirm = (qty) => {
-    setQty(dialog.product, qty, dialog.replace);
+  const onConfirm = (qty, exactTotal) => {
+    setQty(dialog.product, qty, dialog.replace, exactTotal);
     setDialog(null);
   };
 
-  const charge = async ({ tendered, change } = {}) => {
+  const charge = async ({ tendered, change, overrideCreditLimit = false } = {}) => {
     if (isProcessingSale || lines.length === 0) return;
     setIsProcessingSale(true);
 
@@ -112,6 +117,7 @@ export default function Counter() {
         method,
         tendered: tVal,
         change: cVal,
+        overrideCreditLimit,
       });
 
       // 2. Resolver datos del cliente y saldo proyectado
@@ -226,6 +232,15 @@ export default function Counter() {
               </button>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowCashMovementModal(true)}
+            className="flex h-12 shrink-0 items-center gap-1.5 rounded-2xl border border-red-200 bg-red-50/50 px-3.5 text-xs font-bold text-red-700 transition hover:bg-red-100/60 active:scale-95 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300"
+            title="Registrar salida o gasto de efectivo de caja"
+          >
+            <ArrowUpRight size={18} weight="bold" />
+            <span className="hidden sm:inline">Gasto de Caja</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowShortcutsModal(true)}
@@ -469,6 +484,12 @@ export default function Counter() {
 
       {dialog && <QtyDialog product={dialog.product} initial={dialog.initial} onConfirm={onConfirm} onClose={() => setDialog(null)} />}
       {completedSale && <ReceiptModal sale={completedSale} onClose={() => setCompletedSale(null)} />}
+      {showCashMovementModal && (
+        <CashMovementModal
+          onClose={() => setShowCashMovementModal(false)}
+          onSave={addCashMovement}
+        />
+      )}
     </div>
   );
 }

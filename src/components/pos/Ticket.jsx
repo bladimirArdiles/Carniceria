@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bank, CircleNotch, CreditCard, HandCoins, MagnifyingGlass, Money, Receipt, Trash, User, X } from "@phosphor-icons/react";
+import { Bank, CircleNotch, CreditCard, HandCoins, MagnifyingGlass, Money, Receipt, Trash, User, Warning, X } from "@phosphor-icons/react";
 import Segmented from "../ui/Segmented.jsx";
 import EmptyState from "../ui/EmptyState.jsx";
 import { money, qtyText } from "../../lib/format.js";
@@ -21,6 +21,7 @@ export default function Ticket({
   const [tendered, setTendered] = useState("");
   const [customerQuery, setCustomerQuery] = useState("");
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const [authorizedOverride, setAuthorizedOverride] = useState(false);
   const comboboxRef = useRef(null);
 
   const total = lines.reduce((s, l) => s + l.total, 0);
@@ -29,24 +30,31 @@ export default function Ticket({
 
   const selectedCustomer = customers.find((c) => c.id === customerId);
   const customerBalance = selectedCustomer ? (balances[selectedCustomer.id] || 0) : 0;
+  const creditLimit = Number(selectedCustomer?.creditLimit || 0);
+  const projectedDebt = customerBalance + total;
+  const isCreditLimitExceeded = method === "Fiado" && creditLimit > 0 && projectedDebt > creditLimit;
+  const isBlockedByCreditLimit = isCreditLimitExceeded && !authorizedOverride;
 
   const changeCustomer = (id) => {
     setCustomerId(id);
+    setAuthorizedOverride(false);
     if (!id && method === "Fiado") setMethod("Efectivo");
   };
 
   const isUnderpaid = method === "Efectivo" && given > 0 && given < total;
   const isFiadoWithoutCustomer = method === "Fiado" && !customerId;
-  const canCharge = lines.length > 0 && total > 0 && !isUnderpaid && !isFiadoWithoutCustomer;
+  const canCharge = lines.length > 0 && total > 0 && !isUnderpaid && !isFiadoWithoutCustomer && !isBlockedByCreditLimit;
 
   const charge = () => {
     if (!canCharge) return;
     onCharge({
       tendered: given > 0 ? given : total,
       change: Math.max(0, change),
+      overrideCreditLimit: authorizedOverride,
     });
     setTendered("");
     setCustomerQuery("");
+    setAuthorizedOverride(false);
   };
 
   // Cierra el combobox al hacer clic afuera
@@ -135,11 +143,36 @@ export default function Ticket({
               </button>
             </div>
 
-            {/* Aviso de deuda pendiente */}
+            {/* Aviso de deuda pendiente y cupo crediticio */}
             {customerBalance > 0 && (
               <div className="mt-2.5 flex items-center justify-between rounded-xl bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-amber-900 dark:text-amber-200">
                 <span>Saldo adeudado:</span>
                 <span className="font-mono text-sm">{money(customerBalance)}</span>
+              </div>
+            )}
+
+            {creditLimit > 0 && (
+              <div className="mt-2 flex items-center justify-between text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                <span>Límite de fiado autorizado:</span>
+                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">{money(creditLimit)}</span>
+              </div>
+            )}
+
+            {isCreditLimitExceeded && (
+              <div className="mt-2.5 rounded-xl border border-red-500/40 bg-red-50 p-3 text-xs font-bold text-red-900 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Warning size={16} weight="fill" className="text-red-600 shrink-0" />
+                  <span>Supera el límite autorizado por {money(projectedDebt - creditLimit)}.</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer font-semibold text-zinc-800 dark:text-zinc-200 pt-1 border-t border-red-200 dark:border-red-900/50">
+                  <input
+                    type="checkbox"
+                    checked={authorizedOverride}
+                    onChange={(e) => setAuthorizedOverride(e.target.checked)}
+                    className="size-4 rounded accent-red-600 cursor-pointer"
+                  />
+                  <span>Autorizar excepción de fiado</span>
+                </label>
               </div>
             )}
           </div>
@@ -349,7 +382,9 @@ export default function Ticket({
           ) : (
             <>
               <span>
-                {isFiadoWithoutCustomer
+                {isBlockedByCreditLimit
+                  ? "Cupo de fiado superado (Autorizar)"
+                  : isFiadoWithoutCustomer
                   ? "Elegí un cliente para fiar"
                   : isUnderpaid
                   ? `Faltan ${money(total - given)}`

@@ -73,7 +73,7 @@ export default function QtyDialog({ product, initial, onConfirm, onClose }) {
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (calculatedQty > 0) {
-          onConfirm(calculatedQty);
+          onConfirm(calculatedQty, mode === "money" ? finalTotal : undefined);
         }
       }
     };
@@ -216,7 +216,7 @@ export default function QtyDialog({ product, initial, onConfirm, onClose }) {
           type="button"
           className="btn-primary h-16 w-full text-lg shadow-md flex items-center justify-center gap-2"
           disabled={calculatedQty <= 0}
-          onClick={() => onConfirm(calculatedQty)}
+          onClick={() => onConfirm(calculatedQty, mode === "money" ? finalTotal : undefined)}
         >
           <Check size={24} weight="bold" />
           <span>{initial ? "Guardar cantidad" : "Agregar al ticket"}</span>

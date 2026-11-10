@@ -78,13 +78,6 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
     }
   };
 
-  const handleQuickFill = (user, pass) => {
-    setUsername(user);
-    setPassword(pass);
-    setErrorMessage("");
-    setStatus("idle");
-  };
-
   return (
     <div className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-hidden px-4 py-8">
       {/* Atmósfera viva de fondo: esferas con animación suave sin saturación artificial */}
@@ -236,45 +229,6 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
             )}
           </button>
         </form>
-
-        {/* Accesos rápidos para el personal (1 clic para rellenar) */}
-        <div className="mt-6 border-t border-zinc-200 pt-5 dark:border-zinc-800">
-          <p className="mb-2 text-center text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            Perfiles rápidos de acceso
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => handleQuickFill("cajero", "1234")}
-              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            >
-              <span>Cajero</span>
-              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                1234
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill("stock", "1234")}
-              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            >
-              <span>Stock</span>
-              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                1234
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickFill("admin", "1234")}
-              className="flex flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-zinc-50 p-2 text-xs font-bold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100 active:scale-95 dark:border-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            >
-              <span>Admin</span>
-              <span className="mt-0.5 font-mono text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                1234
-              </span>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -1,22 +1,27 @@
 import { isSupabaseConfigured, supabase } from "./supabase.js";
 import { AuthError, parseDatabaseError } from "./validation.js";
 
-const LOCAL_STORAGE_USER_KEY = "ca:auth-session";
+// Memoria volátil de sesión para evitar almacenar credenciales y tokens en localStorage
+let activeSessionMemory = null;
 
 /**
- * Servicio de Autenticación y Autorización integrado con Supabase Auth
+ * Servicio de Autenticación y Autorización de Nivel Profesional
+ * Integrado estrictamente con Supabase Auth (Servidor / Base de datos)
+ * Sin contraseñas hardcodeadas ni backdoors inseguros.
  */
 export const authService = {
   /**
-   * Obtiene la sesión actual persistida (Supabase o Local)
+   * Obtiene la sesión actual directamente desde Supabase Auth (servidor/JWT)
    */
   async getCurrentSession() {
-    if (isSupabaseConfigured) {
+    if (activeSessionMemory) return activeSessionMemory;
+
+    if (isSupabaseConfigured && supabase) {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (session?.user) {
-          // Obtener perfil con rol desde public.profiles
+          // Obtener perfil con rol desde public.profiles en base de datos
           const { data: profile } = await supabase
             .from("profiles")
             .select("*")
@@ -24,7 +29,7 @@ export const authService = {
             .single();
 
           const role = profile?.role || session.user.user_metadata?.role || "cajero";
-          return {
+          activeSessionMemory = {
             id: session.user.id,
             email: session.user.email,
             username: profile?.username || session.user.user_metadata?.username || session.user.email.split("@")[0],
@@ -33,24 +38,18 @@ export const authService = {
             rawRole: role,
             loginAt: new Date().toISOString(),
           };
+          return activeSessionMemory;
         }
       } catch (err) {
         console.warn("Fallo al recuperar sesión de Supabase Auth:", err);
       }
     }
 
-    // Fallback a almacenamiento local seguro
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // Ignorar errores de parsing
-    }
     return null;
   },
 
   /**
-   * Inicio de Sesión con Email o Usuario y Contraseña
+   * Inicio de Sesión seguro mediante el backend de Supabase Auth
    */
   async signIn({ identifier, password }) {
     const idClean = (identifier || "").trim();
@@ -63,79 +62,59 @@ export const authService = {
       throw new AuthError("Por favor ingresá tu contraseña.");
     }
 
-    // 1. Intentar con Supabase Auth si está configurado
-    if (isSupabaseConfigured) {
-      try {
-        // Normalizar email: si no tiene arroba, agregamos @carniceria.com
-        const email = idClean.includes("@") ? idClean : `${idClean.toLowerCase()}@carniceria.com`;
-
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password: passClean,
-        });
-
-        if (!error && data?.user) {
-          // Consultar el perfil y rol en la tabla public.profiles
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", data.user.id)
-            .single();
-
-          const rawRole = profile?.role || data.user.user_metadata?.role || "cajero";
-          const userSession = {
-            id: data.user.id,
-            email: data.user.email,
-            username: profile?.username || data.user.user_metadata?.username || idClean,
-            fullName: profile?.full_name || data.user.user_metadata?.full_name || "Operador",
-            role: rawRole === "admin" ? "Administrador" : rawRole === "stock" ? "Encargado de Stock" : "Cajero",
-            rawRole,
-            loginAt: new Date().toISOString(),
-          };
-
-          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(userSession));
-          return userSession;
-        }
-      } catch (err) {
-        console.warn("Fallo Supabase Auth, evaluando fallback:", err);
-      }
+    if (!isSupabaseConfigured || !supabase) {
+      throw new AuthError(
+        "El servidor de autenticación (Supabase) no está configurado. Verificá las credenciales en .env."
+      );
     }
 
-    // 2. Fallback de Operación Local y Cuentas de Prueba por Rol
-    const isAdm = idClean.toLowerCase().includes("admin");
-    const isStk = idClean.toLowerCase().includes("stock");
-    const isCaj = idClean.toLowerCase().includes("cajero") || idClean.toLowerCase().includes("mostrador");
+    // Normalizar email: si ingresan usuario simple, se normaliza con el dominio del comercio
+    const email = idClean.includes("@") ? idClean : `${idClean.toLowerCase()}@carniceria.com`;
 
-    if (isAdm || isStk || isCaj) {
-      const validTestPass = passClean === "1234" || passClean === "123456" || passClean.length >= 3;
-      if (!validTestPass) {
-        throw new AuthError("Contraseña incorrecta (mínimo 3 caracteres).");
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password: passClean,
+    });
+
+    if (error) {
+      // Mensajes de error claros sin filtrar información interna
+      if (error.message?.includes("Invalid login credentials")) {
+        throw new AuthError("Usuario o contraseña incorrectos.");
       }
-
-      const rawRole = isAdm ? "admin" : isStk ? "stock" : "cajero";
-      const localUser = {
-        id: "local-" + rawRole,
-        email: `${rawRole}@carniceria.com`,
-        username: rawRole,
-        fullName: isAdm ? "Administrador General" : isStk ? "Encargado de Depósito y Stock" : "Cajero Mostrador",
-        role: isAdm ? "Administrador" : isStk ? "Encargado de Stock" : "Cajero",
-        rawRole,
-        loginAt: new Date().toISOString(),
-      };
-
-      localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(localUser));
-      return localUser;
+      throw new AuthError(parseDatabaseError(error));
     }
 
-    throw new AuthError("Usuario o contraseña incorrectos.");
+    if (!data?.user) {
+      throw new AuthError("No se pudo iniciar sesión. Verificá tus credenciales.");
+    }
+
+    // Consultar el perfil y rol en la tabla public.profiles
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", data.user.id)
+      .single();
+
+    const rawRole = profile?.role || data.user.user_metadata?.role || "cajero";
+    activeSessionMemory = {
+      id: data.user.id,
+      email: data.user.email,
+      username: profile?.username || data.user.user_metadata?.username || idClean,
+      fullName: profile?.full_name || data.user.user_metadata?.full_name || "Operador",
+      role: rawRole === "admin" ? "Administrador" : rawRole === "stock" ? "Encargado de Stock" : "Cajero",
+      rawRole,
+      loginAt: new Date().toISOString(),
+    };
+
+    return activeSessionMemory;
   },
 
   /**
-   * Cierre de Sesión Seguro
+   * Cierre de Sesión Seguro en el servidor e invalidación de memoria local
    */
   async signOut() {
-    localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
-    if (isSupabaseConfigured) {
+    activeSessionMemory = null;
+    if (isSupabaseConfigured && supabase) {
       try {
         await supabase.auth.signOut();
       } catch (err) {
@@ -145,11 +124,11 @@ export const authService = {
   },
 
   /**
-   * Registro de Nuevo Usuario / Empleado (Solo Admin)
+   * Registro de Nuevo Usuario / Empleado en el servidor (Solo Admin)
    */
   async createEmployee({ email, password, username, fullName, role = "cajero" }) {
-    if (!isSupabaseConfigured) {
-      throw new AuthError("La base de datos Supabase no está configurada.");
+    if (!isSupabaseConfigured || !supabase) {
+      throw new AuthError("El backend Supabase no está configurado.");
     }
 
     const { data, error } = await supabase.auth.signUp({
@@ -172,11 +151,11 @@ export const authService = {
    * Suscripción a eventos de autenticación y refresco automático de tokens JWT
    */
   onAuthStateChange(callback) {
-    if (!isSupabaseConfigured) return () => {};
+    if (!isSupabaseConfigured || !supabase) return () => {};
     try {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === "SIGNED_OUT") {
-          localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
+          activeSessionMemory = null;
           callback(null);
         } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           if (session?.user) {
@@ -196,10 +175,9 @@ export const authService = {
    */
   hasPermission(user, requiredRole) {
     if (!user) return false;
-    if (user.rawRole === "admin" || user.role === "Administrador") return true; // El admin tiene acceso total
+    if (user.rawRole === "admin" || user.role === "Administrador") return true;
     if (requiredRole === "stock" && (user.rawRole === "stock" || user.role === "Encargado de Stock")) return true;
     if (requiredRole === "cajero" && (user.rawRole === "cajero" || user.role === "Cajero")) return true;
     return false;
   },
 };
-

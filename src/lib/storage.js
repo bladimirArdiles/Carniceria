@@ -1,16 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import { idbGet, idbSet } from "./idb.js";
+import { idbGet, idbSet, purgeSensitiveLocalStorage } from "./idb.js";
 
 const PREFIX = "ca:";
 
-export const STORAGE_KEYS = ["products", "customers", "sales", "payments", "movements", "sync_outbox"];
+export const STORAGE_KEYS = [
+  "products",
+  "customers",
+  "sales",
+  "payments",
+  "movements",
+  "sync_outbox",
+  "cash_movements",
+  "suppliers",
+  "supplier_purchases",
+  "supplier_payments",
+];
+
+// Limpieza automática inmediata de datos comerciales o sensibles residuales de localStorage
+if (typeof window !== "undefined") {
+  purgeSensitiveLocalStorage();
+}
 
 /**
- * Hook de almacenamiento síncrono en localStorage para configuraciones ligeras (tema, sesión)
+ * Hook de almacenamiento estrictamente reservado para preferencias cosméticas de UI
+ * (ej: tema visual 'dark' | 'light').
+ * NUNCA debe utilizarse para credenciales, clientes, inventario ni dinero.
  */
 export function useStored(key, initial) {
+  // Solo se permiten claves cosméticas explícitas en localStorage
+  const ALLOWED_LOCAL_KEYS = ["theme"];
+  if (!ALLOWED_LOCAL_KEYS.includes(key)) {
+    console.warn(`[Seguridad] Se bloqueó el intento de guardar clave no cosmética en localStorage: "${key}".`);
+  }
+
   const [value, setValue] = useState(() => {
     try {
+      if (!ALLOWED_LOCAL_KEYS.includes(key)) return initial;
       const raw = localStorage.getItem(PREFIX + key);
       return raw ? JSON.parse(raw) : initial;
     } catch {
@@ -20,9 +45,10 @@ export function useStored(key, initial) {
 
   useEffect(() => {
     try {
+      if (!ALLOWED_LOCAL_KEYS.includes(key)) return;
       localStorage.setItem(PREFIX + key, JSON.stringify(value));
     } catch {
-      window.dispatchEvent(new CustomEvent("ca:storage-full"));
+      // Ignorar fallos de cuota para preferencias cosméticas
     }
   }, [key, value]);
 
@@ -30,26 +56,15 @@ export function useStored(key, initial) {
 }
 
 /**
- * Hook de almacenamiento asíncrono en IndexedDB para colecciones de alto volumen
- * (productos, ventas, clientes, pagos, movimientos)
- * - Carga asíncrona sin bloquear renderizado inicial.
- * - Escritura diferida (debounced) para no impactar la fluidez táctil del mostrador.
- * - Sin límite de 5MB.
+ * Hook de almacenamiento asíncrono en IndexedDB (sandbox seguro del navegador)
+ * para operar como réplica offline/local sin contaminar localStorage.
  */
 export function useIndexedCollection(key, initialValue) {
-  // Intentar lectura sincrónica de caché inmediata si existe
-  const [value, setValue] = useState(() => {
-    try {
-      const legacy = localStorage.getItem(PREFIX + key);
-      return legacy ? JSON.parse(legacy) : initialValue;
-    } catch {
-      return initialValue;
-    }
-  });
+  const [value, setValue] = useState(initialValue);
   const [isLoaded, setIsLoaded] = useState(false);
   const debounceTimerRef = useRef(null);
 
-  // Carga asíncrona desde IndexedDB al montar
+  // Carga asíncrona exclusiva desde IndexedDB al montar
   useEffect(() => {
     let isMounted = true;
     async function loadFromIndexedDB() {

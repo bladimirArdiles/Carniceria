@@ -35,6 +35,7 @@ id_rsa*
 *.sqlite3
 *.db
 *.sql
+!supabase/*.sql
 
 # Editores y herramientas
 .vscode/*
