@@ -99,6 +99,16 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
         })}
 
         <div className="mt-auto flex flex-col items-center gap-2">
+          <a
+            href="https://www.instagram.com/bladimirardiles/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Desarrollado por Bladimir Ardiles"
+            className="flex flex-col items-center justify-center p-2 text-center text-[10px] font-semibold text-zinc-400 transition hover:text-accent-500 dark:text-zinc-500 dark:hover:text-accent-400"
+          >
+            <span>© 2026</span>
+            <span className="underline underline-offset-2">B. Ardiles</span>
+          </a>
           <button
             onClick={onLogout}
             title="Cerrar sesión"
@@ -230,6 +240,20 @@ function Shell({ currentUser, onLogout, onToggleTheme, isDark }) {
             </Suspense>
           </ErrorBoundary>
         </main>
+
+        <footer className="mt-12 mb-6 border-t border-zinc-200/80 pt-6 text-center text-xs text-zinc-500 dark:border-zinc-800/80 dark:text-zinc-400">
+          <p>
+            © {new Date().getFullYear()} Carnicería - Mostrador &bull; Desarrollado por{" "}
+            <a
+              href="https://www.instagram.com/bladimirardiles/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-zinc-800 underline decoration-accent-500 underline-offset-4 transition hover:text-accent-600 dark:text-zinc-200 dark:hover:text-accent-400"
+            >
+              Bladimir Ardiles
+            </a>
+          </p>
+        </footer>
       </div>
 
       <nav aria-label="Secciones" className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-zinc-800 dark:bg-zinc-950 md:hidden">

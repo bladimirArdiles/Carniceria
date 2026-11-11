@@ -229,6 +229,21 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
             )}
           </button>
         </form>
+
+        {/* Footer con Copyright y enlace del Autor */}
+        <div className="mt-8 border-t border-zinc-200 pt-4 text-center text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+          <p>
+            © {new Date().getFullYear()} Carnicería - Mostrador &bull; Hecho por{" "}
+            <a
+              href="https://www.instagram.com/bladimirardiles/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-zinc-800 underline decoration-accent-500 underline-offset-4 transition hover:text-accent-600 dark:text-zinc-200 dark:hover:text-accent-400"
+            >
+              Bladimir Ardiles
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );
