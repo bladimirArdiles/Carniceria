@@ -226,7 +226,7 @@ export function validateMovementData({ productId, type, qty, cost, currentStock 
 /**
  * Validaciones de Negocio para Productos
  */
-export function validateProductData({ name, price, minStock, unit }) {
+export function validateProductData({ name, price, minStock, unit, plu, barcode }) {
   if (!name || !name.trim()) {
     throw new ValidationError("El nombre del producto no puede estar vacío.", "name");
   }
@@ -244,11 +244,26 @@ export function validateProductData({ name, price, minStock, unit }) {
     throw new ValidationError("La unidad de medida debe ser 'kg' o 'u'.", "unit");
   }
 
+  let cleanPlu = null;
+  if (plu !== undefined && plu !== null && String(plu).trim() !== "") {
+    cleanPlu = parseInt(String(plu).trim(), 10);
+    if (isNaN(cleanPlu) || cleanPlu <= 0 || cleanPlu > 99999) {
+      throw new ValidationError("El código de balanza (PLU) debe ser un número entre 1 y 99999.", "plu");
+    }
+  }
+
+  let cleanBarcode = null;
+  if (barcode && String(barcode).trim()) {
+    cleanBarcode = String(barcode).trim().replace(/[^\d\w-]/g, "");
+  }
+
   return {
     cleanName: name.trim(),
     cleanPrice: Math.round(cleanPrice),
     cleanMinStock,
     cleanUnit: unit,
+    cleanPlu,
+    cleanBarcode,
   };
 }
 

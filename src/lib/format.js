@@ -38,15 +38,16 @@ export const fmtDateTime = (iso) =>
 export const fmtLongDate = (d = new Date()) =>
   new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long" }).format(d);
 
-export const DEFAULT_CATEGORIES = ["Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos", "Elaborados", "Otros"];
+export const DEFAULT_CATEGORIES = ["Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos", "Verduras", "Elaborados", "Otros"];
 
 export const getProductCategory = (p) => {
   if (p?.category && p.category.trim()) return p.category.trim();
   const n = (p?.name || "").toLowerCase();
+  if (n.includes("verdura") || n.includes("lechuga") || n.includes("tomate") || n.includes("papa") || n.includes("cebolla") || n.includes("morron") || n.includes("zanahoria")) return "Verduras";
   if (n.includes("pollo")) return "Pollo";
   if (n.includes("cerdo") || n.includes("pechito") || n.includes("bondiola")) return "Cerdo";
   if (n.includes("chorizo") || n.includes("morcilla") || n.includes("salchicha")) return "Embutidos";
-  if (n.includes("chinchulin") || n.includes("molleja") || n.includes("higado") || n.includes("rinon")) return "Achuras";
+  if (n.includes("chinchulin") || n.includes("molleja") || n.includes("higado") || n.includes("rinon") || n.includes("tripa") || n.includes("lengua")) return "Achuras";
   return "Vaca";
 };
 

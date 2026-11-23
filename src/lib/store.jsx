@@ -498,11 +498,13 @@ export function StoreProvider({ children }) {
 
     async saveProduct(prod) {
       try {
-        const { cleanName, cleanPrice, cleanMinStock, cleanUnit } = validateProductData({
+        const { cleanName, cleanPrice, cleanMinStock, cleanUnit, cleanPlu, cleanBarcode } = validateProductData({
           name: prod.name,
           price: prod.price,
           minStock: prod.minStock,
           unit: prod.unit,
+          plu: prod.plu,
+          barcode: prod.barcode,
         });
 
         const validatedProd = {
@@ -511,6 +513,8 @@ export function StoreProvider({ children }) {
           price: cleanPrice,
           minStock: cleanMinStock,
           unit: cleanUnit,
+          plu: cleanPlu,
+          barcode: cleanBarcode,
           category: prod.category?.trim() || "Otros",
         };
 

@@ -105,6 +105,7 @@ export default function Reports() {
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+  const [auditFilter, setAuditFilter] = useState("all"); // "all" | "VOID_SALE" | "BULK_PRICE_UPDATE" | "CUSTOMER_PAYMENT" | "SUPPLIER" | "STOCK"
 
   const availableYears = useMemo(() => {
     const years = new Set(sales.map((s) => new Date(s.date).getFullYear()));
@@ -378,8 +379,9 @@ export default function Reports() {
   const handleOpenAudit = async () => {
     setShowAuditModal(true);
     setIsLoadingAudit(true);
+    setAuditFilter("all");
     try {
-      const logs = await getAuditLogs(50);
+      const logs = await getAuditLogs(100);
       setAuditLogs(logs || []);
     } catch {
       setAuditLogs([]);
@@ -387,6 +389,47 @@ export default function Reports() {
       setIsLoadingAudit(false);
     }
   };
+
+  const exportAuditCSV = () => {
+    if (!auditLogs.length) return;
+    const header = ["Fecha y Hora", "Accion", "Entidad", "Detalle de Operacion"];
+    const rows = filteredAuditLogs.map((log) => {
+      let detailStr = "";
+      if (typeof log.details === "object" && log.details !== null) {
+        detailStr = Object.entries(log.details)
+          .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+          .join(" | ");
+      } else {
+        detailStr = String(log.details || "");
+      }
+      return [
+        fmtDateTime(log.created_at),
+        log.action,
+        log.entity_name || "",
+        detailStr.replace(/"/g, '""'),
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [header.join(";"), ...rows.map((r) => r.map((c) => `"${c}"`).join(";"))].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `bitacora-auditoria-${todayStr}.csv`);
+    link.click();
+    URL.revokeObjectURL(url);
+    notify("Bitácora de auditoría descargada en formato Excel (CSV)");
+  };
+
+  const filteredAuditLogs = useMemo(() => {
+    if (auditFilter === "all") return auditLogs;
+    if (auditFilter === "VOID_SALE") return auditLogs.filter((l) => l.action.includes("VOID"));
+    if (auditFilter === "BULK_PRICE_UPDATE") return auditLogs.filter((l) => l.action.includes("PRICE"));
+    if (auditFilter === "CUSTOMER_PAYMENT") return auditLogs.filter((l) => l.action.includes("PAYMENT") && !l.action.includes("SUPPLIER"));
+    if (auditFilter === "SUPPLIER") return auditLogs.filter((l) => l.action.includes("SUPPLIER"));
+    if (auditFilter === "STOCK") return auditLogs.filter((l) => l.action.includes("STOCK") || l.action.includes("INVENTORY") || l.action.includes("YIELD"));
+    return auditLogs;
+  }, [auditLogs, auditFilter]);
 
   return (
     <div className="space-y-6">
@@ -1084,50 +1127,174 @@ export default function Reports() {
           size="lg"
         >
           <div className="space-y-4">
-            <p className="text-xs text-zinc-600 dark:text-zinc-400">
-              Registro inalterable de operaciones críticas: ventas, anulaciones, movimientos de stock, cobros y salidas de caja.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Registro inalterable de operaciones críticas: anulaciones, cambios de precios, cobros y stock.
+              </p>
+              <button
+                type="button"
+                onClick={exportAuditCSV}
+                disabled={!filteredAuditLogs.length}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-300 bg-white px-3 py-1.5 text-xs font-bold text-zinc-800 hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 shadow-xs shrink-0"
+              >
+                <FileCsv size={16} weight="bold" className="text-emerald-600" />
+                Exportar Auditoría (CSV)
+              </button>
+            </div>
+
+            {/* Filtros Rápidos por Categoría de Evento */}
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: "all", label: `Todos (${auditLogs.length})` },
+                { id: "VOID_SALE", label: "🚨 Anulaciones" },
+                { id: "BULK_PRICE_UPDATE", label: "📈 Ajustes Precios" },
+                { id: "CUSTOMER_PAYMENT", label: "💵 Cobros Fiados" },
+                { id: "SUPPLIER", label: "🚚 Proveedores" },
+                { id: "STOCK", label: "📦 Stock y Desposte" },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setAuditFilter(f.id)}
+                  className={`rounded-xl px-2.5 py-1 text-xs font-bold transition active:scale-95 ${
+                    auditFilter === f.id
+                      ? "bg-accent-500 text-zinc-950 font-black shadow-xs"
+                      : "border border-zinc-200 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
 
             {isLoadingAudit ? (
               <div className="flex h-48 items-center justify-center">
                 <CircleNotch size={28} weight="bold" className="animate-spin text-accent-600" />
               </div>
-            ) : auditLogs.length === 0 ? (
+            ) : filteredAuditLogs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-300 p-8 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-800">
-                No hay registros de auditoría aún o la base de datos está operando en modo local.
+                No hay registros para el filtro seleccionado.
               </div>
             ) : (
               <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-800">
-                {auditLogs.map((log) => {
-                  const isVoid = log.action === "VOID_SALE";
-                  const isSale = log.action === "CREATE_SALE";
-                  const isCash = log.action === "CASH_EXPENSE" || log.action === "CASH_INFLOW";
-                  const isPayment = log.action === "CUSTOMER_PAYMENT";
-                  const isStock = log.action === "STOCK_MOVEMENT";
+                {filteredAuditLogs.map((log) => {
+                  const isVoid = log.action.includes("VOID");
+                  const isPrice = log.action.includes("PRICE");
+                  const isPayment = log.action.includes("PAYMENT") && !log.action.includes("SUPPLIER");
+                  const isSupplier = log.action.includes("SUPPLIER");
+                  const isStock = log.action.includes("STOCK") || log.action.includes("INVENTORY") || log.action.includes("YIELD");
+
+                  const d = typeof log.details === "object" && log.details !== null ? log.details : {};
 
                   return (
-                    <div key={log.id} className="p-3 text-xs space-y-1">
+                    <div key={log.id} className="p-3.5 text-xs space-y-2 hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition">
                       <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
-                            isVoid
-                              ? "bg-red-500/20 text-red-800 dark:text-red-300"
-                              : isSale
-                              ? "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
-                              : isCash
-                              ? "bg-amber-500/20 text-amber-800 dark:text-amber-300"
-                              : "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
-                          }`}
-                        >
-                          {log.action}
-                        </span>
-                        <span className="font-mono text-[11px] text-zinc-500">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-lg px-2.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-wider ${
+                              isVoid
+                                ? "bg-red-500/20 text-red-700 dark:text-red-300 border border-red-500/30"
+                                : isPrice
+                                ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                : isPayment
+                                ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                                : isSupplier
+                                ? "bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-500/30"
+                                : "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                            }`}
+                          >
+                            {isVoid
+                              ? "Venta Anulada"
+                              : isPrice
+                              ? "Ajuste Masivo de Precios"
+                              : isPayment
+                              ? "Cobro de Cuenta Corriente"
+                              : isSupplier
+                              ? "Operación con Proveedor"
+                              : isStock
+                              ? "Movimiento de Stock"
+                              : log.action}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[11px] font-semibold text-zinc-500">
                           {fmtDateTime(log.created_at)}
                         </span>
                       </div>
-                      <p className="font-mono text-zinc-700 dark:text-zinc-300 break-all">
-                        {typeof log.details === "object" ? JSON.stringify(log.details) : log.details}
-                      </p>
+
+                      {/* Renderizado amigable según tipo de evento */}
+                      {isVoid && (
+                        <div className="rounded-xl bg-red-500/10 p-2.5 border border-red-500/20 text-red-950 dark:text-red-200 font-semibold space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span>Ticket #{d.ticketNumber || "S/N"} anulación</span>
+                            <span className="font-black text-sm text-red-700 dark:text-red-400">
+                              -{money(d.totalReversed || d.total || 0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400">
+                            <span>Medio: <strong className="text-zinc-900 dark:text-zinc-100">{d.method || "Efectivo"}</strong></span>
+                            <span>Motivo: <strong className="text-zinc-900 dark:text-zinc-100">{d.reason || "Sin motivo"}</strong></span>
+                          </div>
+                        </div>
+                      )}
+
+                      {isPrice && (
+                        <div className="rounded-xl bg-amber-500/10 p-2.5 border border-amber-500/20 text-amber-950 dark:text-amber-200 space-y-1">
+                          <div className="flex items-center justify-between font-bold">
+                            <span>Ajuste en categoría: <strong>{d.category || "Todas"}</strong></span>
+                            <span className="text-amber-700 dark:text-amber-400 font-black">
+                              {d.type === "percentage" ? `+${d.value}%` : `+$${d.value}`}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                            Cortes actualizados: <strong>{d.updatedCount || 0}</strong> cortes
+                          </p>
+                        </div>
+                      )}
+
+                      {isPayment && (
+                        <div className="rounded-xl bg-emerald-500/10 p-2.5 border border-emerald-500/20 text-emerald-950 dark:text-emerald-200 space-y-1">
+                          <div className="flex items-center justify-between font-bold">
+                            <span>Abono a cuenta corriente de cliente</span>
+                            <span className="font-black text-emerald-700 dark:text-emerald-400 text-sm">
+                              +{money(d.amount || 0)}
+                            </span>
+                          </div>
+                          {d.newBalance !== undefined && (
+                            <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                              Saldo deudor restante: <strong>{money(d.newBalance)}</strong> (Anterior: {money(d.previousBalance)})
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {isSupplier && (
+                        <div className="rounded-xl bg-blue-500/10 p-2.5 border border-blue-500/20 text-blue-950 dark:text-blue-200 space-y-1">
+                          <div className="flex items-center justify-between font-bold">
+                            <span>Proveedor: <strong>{d.name || d.supplierName || "Frigorífico"}</strong></span>
+                            {d.totalAmount && (
+                              <span className="font-black text-blue-700 dark:text-blue-400">
+                                {money(d.totalAmount)}
+                              </span>
+                            )}
+                            {d.amount && (
+                              <span className="font-black text-blue-700 dark:text-blue-400">
+                                Pago: {money(d.amount)}
+                              </span>
+                            )}
+                          </div>
+                          {d.grossKg && (
+                            <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                              Media res ingresada: <strong>{d.grossKg} kg gancho</strong>
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {!isVoid && !isPrice && !isPayment && !isSupplier && (
+                        <div className="rounded-xl bg-zinc-100 p-2 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 font-mono text-[11px] break-all">
+                          {typeof log.details === "object" ? JSON.stringify(log.details) : String(log.details)}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

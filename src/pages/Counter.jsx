@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Keyboard, MagnifyingGlass, Receipt, X } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { ArrowUpRight, Barcode, Keyboard, MagnifyingGlass, Receipt, X } from "@phosphor-icons/react";
 import { useStore } from "../lib/store.jsx";
 import { DEFAULT_CATEGORIES, lineTotal, money, num } from "../lib/format.js";
 import Badge, { stockLabel, stockTone } from "../components/ui/Badge.jsx";
@@ -8,6 +8,9 @@ import QtyDialog from "../components/pos/QtyDialog.jsx";
 import Ticket from "../components/pos/Ticket.jsx";
 import ReceiptModal from "../components/pos/ReceiptModal.jsx";
 import CashMovementModal from "../components/pos/CashMovementModal.jsx";
+import ScaleSimulatorModal from "../components/pos/ScaleSimulatorModal.jsx";
+import { parseBarcode, playScannerBeep } from "../lib/barcodeParser.js";
+import { useBarcodeScanner } from "../hooks/useBarcodeScanner.js";
 
 // Función para obtener la categoría con deducción inteligente para productos existentes
 export const getProductCategory = (p) => {
@@ -31,6 +34,7 @@ export default function Counter() {
   const [completedSale, setCompletedSale] = useState(null);
   const [isProcessingSale, setIsProcessingSale] = useState(false);
   const [showCashMovementModal, setShowCashMovementModal] = useState(false);
+  const [showScaleSimulator, setShowScaleSimulator] = useState(false);
 
   // Estados de Fase 3: Atajos de teclado y experiencia mobile
   const searchInputRef = useRef(null);
@@ -59,7 +63,7 @@ export default function Counter() {
     products.forEach((p) => {
       existing.add(getProductCategory(p));
     });
-    const standard = ["⭐ Frecuentes", "Todas", "Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos"];
+    const standard = ["⭐ Frecuentes", "Todas", "Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos", "Verduras", "Elaborados", "Otros"];
     const extras = Array.from(existing).filter((c) => !standard.includes(c));
     return [...standard, ...extras];
   }, [products]);
@@ -100,6 +104,32 @@ export default function Counter() {
     setQty(dialog.product, qty, dialog.replace, exactTotal);
     setDialog(null);
   };
+
+  // Procesador central de lecturas de código de barras y balanza
+  const handleBarcodeScan = useCallback((rawBarcode) => {
+    try {
+      const res = parseBarcode(rawBarcode, products);
+      if (!res.success) {
+        playScannerBeep("error");
+        notify(`⚠️ Balanza: ${res.error}`);
+        return;
+      }
+
+      // Éxito: agregar la línea automáticamente al ticket
+      playScannerBeep("success");
+      setQty(res.product, res.qty, false, res.total);
+      notify(`🥩 Agregado: ${res.message}`);
+    } catch (err) {
+      console.error("Error al procesar lectura de escáner en mostrador:", err);
+      playScannerBeep("error");
+      notify("Error al leer código de barras de balanza");
+    }
+  }, [products, notify]);
+
+  // Hook pasivo de captura ultrarrápida de escáner USB/Bluetooth
+  useBarcodeScanner(handleBarcodeScan, {
+    enabled: !dialog && !completedSale && !showShortcutsModal && !showScaleSimulator && !showCashMovementModal,
+  });
 
   const charge = async ({ tendered, change, overrideCreditLimit = false } = {}) => {
     if (isProcessingSale || lines.length === 0) return;
@@ -232,6 +262,15 @@ export default function Counter() {
               </button>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowScaleSimulator(true)}
+            className="flex h-12 shrink-0 items-center gap-1.5 rounded-2xl border border-amber-300 bg-amber-500/10 px-3.5 text-xs font-bold text-amber-700 transition hover:bg-amber-500/20 active:scale-95 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300"
+            title="Abrir simulador y probador de códigos de balanza EAN-13"
+          >
+            <Barcode size={18} weight="bold" />
+            <span className="hidden sm:inline">Balanza</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowCashMovementModal(true)}
@@ -488,6 +527,13 @@ export default function Counter() {
         <CashMovementModal
           onClose={() => setShowCashMovementModal(false)}
           onSave={addCashMovement}
+        />
+      )}
+      {showScaleSimulator && (
+        <ScaleSimulatorModal
+          products={products}
+          onSimulateScan={handleBarcodeScan}
+          onClose={() => setShowScaleSimulator(false)}
         />
       )}
     </div>

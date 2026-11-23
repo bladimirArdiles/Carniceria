@@ -61,6 +61,8 @@ export const supabaseService = {
       cost: Number(p.cost || 0),
       stock: Number(p.stock || 0),
       minStock: Number(p.min_stock || 0),
+      plu: p.plu !== undefined && p.plu !== null ? Number(p.plu) : null,
+      barcode: p.barcode || null,
     }));
   },
 
@@ -69,18 +71,27 @@ export const supabaseService = {
 
     // Obtener o asegurar la categoría
     const categories = await this.ensureCategories();
-    let cat = categories.find((c) => c.name.toLowerCase() === (p.category || "Vaca").toLowerCase());
+    const reqCatName = (p.category || "").trim().toLowerCase();
+    
+    // Búsqueda inteligente: exacto, o por contención (ej: 'achuras' coincide con 'Achuras y Menudencias' si no hay otra)
+    let cat = categories.find((c) => c.name.toLowerCase() === reqCatName);
+    if (!cat && reqCatName) {
+      cat = categories.find((c) => c.name.toLowerCase().includes(reqCatName) || reqCatName.includes(c.name.toLowerCase()));
+    }
 
-    if (!cat && categories.length > 0) {
-      cat = categories[0];
-    } else if (!cat) {
+    if (!cat && reqCatName) {
       const { data: newCat, error: catError } = await supabase
         .from("categories")
-        .insert({ name: p.category || "Vaca" })
+        .insert({ name: p.category.trim() })
         .select()
         .single();
-      if (catError) throw catError;
-      cat = newCat;
+      if (!catError && newCat) {
+        cat = newCat;
+      }
+    }
+
+    if (!cat && categories.length > 0) {
+      cat = categories.find((c) => c.name.toLowerCase() === "vaca") || categories[0];
     }
 
     const payload = {
@@ -95,27 +106,59 @@ export const supabaseService = {
       updated_at: new Date().toISOString(),
     };
 
+    if (p.plu !== undefined) {
+      payload.plu = p.plu !== null && p.plu !== "" ? Number(p.plu) : null;
+    }
+    if (p.barcode !== undefined) {
+      payload.barcode = p.barcode ? String(p.barcode).trim() : null;
+    }
+
     if (isUUID(p.id)) {
       payload.id = p.id;
     }
 
-    const { data, error } = await supabase
-      .from("products")
-      .upsert(payload, { onConflict: "id" })
-      .select("*, categories(id, name)")
-      .single();
+    // Intentar upsert con columnas completas (si la tabla ya tiene plu/barcode)
+    // Si la tabla en Supabase aún no tiene esas columnas, hacer fallback sin ellas para que nunca falle el guardado
+    let savedData = null;
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .upsert(payload, { onConflict: "id" })
+        .select("*, categories(id, name)")
+        .single();
+      if (!error && data) {
+        savedData = data;
+      } else if (error) {
+        throw error;
+      }
+    } catch (upsertErr) {
+      if (upsertErr.message?.includes("column") || upsertErr.code === "PGRST204" || upsertErr.code === "42703") {
+        delete payload.plu;
+        delete payload.barcode;
+        const { data: fbData, error: fbErr } = await supabase
+          .from("products")
+          .upsert(payload, { onConflict: "id" })
+          .select("*, categories(id, name)")
+          .single();
+        if (fbErr) throw fbErr;
+        savedData = fbData;
+      } else {
+        throw upsertErr;
+      }
+    }
 
-    if (error) throw error;
     return {
-      id: data.id,
-      name: data.name,
-      category: data.categories?.name || p.category,
-      categoryId: data.category_id,
-      unit: data.unit,
-      price: Number(data.price),
-      cost: Number(data.cost || 0),
-      stock: Number(data.stock || 0),
-      minStock: Number(data.min_stock || 0),
+      id: savedData.id,
+      name: savedData.name,
+      category: savedData.categories?.name || p.category,
+      categoryId: savedData.category_id,
+      unit: savedData.unit,
+      price: Number(savedData.price),
+      cost: Number(savedData.cost || 0),
+      stock: Number(savedData.stock || 0),
+      minStock: Number(savedData.min_stock || 0),
+      plu: savedData.plu !== undefined && savedData.plu !== null ? Number(savedData.plu) : p.plu || null,
+      barcode: savedData.barcode || p.barcode || null,
     };
   },
 

@@ -12,6 +12,8 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
   const [price, setPrice] = useState(product ? String(product.price) : "");
   const [minStock, setMinStock] = useState(product ? String(product.minStock) : "5");
   const [stock, setStock] = useState("0");
+  const [plu, setPlu] = useState(product?.plu ? String(product.plu) : "");
+  const [barcode, setBarcode] = useState(product?.barcode || "");
   const [error, setError] = useState("");
 
   const toNum = (v) => parseFloat(String(v).replace(",", "."));
@@ -26,6 +28,11 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
     const st = toNum(stock);
     if (isNaN(st) || st < 0) return setError("El stock inicial no puede ser negativo.");
 
+    const parsedPlu = plu.trim() ? parseInt(plu.trim(), 10) : null;
+    if (plu.trim() && (isNaN(parsedPlu) || parsedPlu <= 0)) {
+      return setError("El código de balanza (PLU) debe ser un número entero mayor a 0.");
+    }
+
     const newId = product?.id || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : uid());
 
     onSave({
@@ -35,6 +42,8 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
       unit,
       price: Math.round(p),
       minStock: ms,
+      plu: parsedPlu,
+      barcode: barcode.trim() || null,
       ...(product ? {} : { stock: st }),
     });
   };
@@ -83,6 +92,38 @@ export default function ProductForm({ product, onSave, onDelete, onClose }) {
         </div>
 
         <Segmented label="Se vende por" value={unit} onChange={setUnit} options={[{ value: "kg", label: "Kilos" }, { value: "u", label: "Unidades" }]} />
+
+        {/* Códigos de Identificación: Balanza (PLU) y Código de Barras Directo */}
+        <div className="grid grid-cols-2 gap-3 p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700/80">
+          <div>
+            <label className="label text-xs" htmlFor="pf-plu">
+              Código Balanza (PLU)
+            </label>
+            <input
+              id="pf-plu"
+              className="field font-mono font-bold text-sm"
+              inputMode="numeric"
+              placeholder="Ej: 1, 12, 105"
+              value={plu}
+              onChange={(e) => setPlu(e.target.value.replace(/\D/g, ""))}
+            />
+            <p className="mt-1 text-[10px] text-zinc-500">Número de tecla en balanza</p>
+          </div>
+          <div>
+            <label className="label text-xs" htmlFor="pf-barcode">
+              Código de Barras Directo
+            </label>
+            <input
+              id="pf-barcode"
+              className="field font-mono font-bold text-sm"
+              placeholder="Ej: 7791234567890"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value.trim())}
+            />
+            <p className="mt-1 text-[10px] text-zinc-500">Para bolsas o productos cerrados</p>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label" htmlFor="pf-price">Precio por {unit === "kg" ? "kg" : "unidad"}</label>

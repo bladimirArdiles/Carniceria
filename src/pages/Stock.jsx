@@ -34,7 +34,7 @@ export default function Stock() {
     products.forEach((p) => {
       existing.add(getProductCategory(p));
     });
-    const standard = ["Todas", ...(lowCount > 0 ? ["⚠️ Alertas"] : []), "Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos"];
+    const standard = ["Todas", ...(lowCount > 0 ? ["⚠️ Alertas"] : []), "Vaca", "Cerdo", "Pollo", "Achuras", "Embutidos", "Verduras", "Elaborados", "Otros"];
     const extras = Array.from(existing).filter((c) => !standard.includes(c));
     return [...standard, ...extras];
   }, [products, lowCount]);
